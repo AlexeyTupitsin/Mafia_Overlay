@@ -1,0 +1,31 @@
+# Зависимости
+node_modules/
+
+# Данные времени выполнения (генерируются сервером)
+data/
+uploads/
+
+# Локальный конфиг с секретом трекера (service_role-ключ). Шаблон — config.example.json
+config.json
+
+# Внутренняя документация разработки (ТЗ, дизайн-доки, скриншоты) — не для публичного репо
+docs/
+
+# Логи
+*.log
+
+# Артефакты тестов (скриншоты от tests/test-shot.mjs)
+shot-*.png
+
+# Индекс codegraph
+.codegraph/
+
+# Локальные настройки Claude Code
+.claude/settings.local.json
+
+# Системные / редакторные файлы
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp

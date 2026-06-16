@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Панель ведущего — мафия</title>
+  <link rel="stylesheet" href="control.css">
+</head>
+<body>
+  <header id="topbar">
+    <div class="tb-group">
+      <div id="phase-label">—</div>
+      <button id="btn-next-phase" class="btn btn-accent" hidden>Ночь →</button>
+    </div>
+
+    <div class="tb-group" id="timer-box" hidden>
+      <div id="timer-display">60</div>
+      <button class="btn" id="btn-timer-60">60</button>
+      <button class="btn" id="btn-timer-30">30</button>
+      <button class="btn" id="btn-timer-toggle">▶</button>
+      <button class="btn" id="btn-timer-reset">⟲</button>
+    </div>
+
+    <div class="tb-group">
+      <button class="btn" id="btn-undo" disabled>⎌ Отменить</button>
+      <div id="conn-ind" title="Соединение"><span class="dot"></span><span id="conn-text">…</span></div>
+      <button class="btn" id="btn-menu">☰</button>
+    </div>
+  </header>
+
+  <div id="menu-popover" hidden>
+    <div class="menu-section" id="menu-overlay-toggles">
+      <div class="menu-title">Оверлей</div>
+    </div>
+    <button class="menu-item" id="mi-best-move">ЛХ — лучший ход</button>
+    <button class="menu-item" id="mi-settings">Настройки</button>
+    <button class="menu-item" id="mi-archive">Архив игр</button>
+    <button class="menu-item" id="mi-new-game">Новая игра</button>
+    <button class="menu-item danger" id="mi-finish">Завершить игру</button>
+  </div>
+
+  <main id="game-screen" hidden>
+    <div id="best-move-banner" hidden></div>
+    <div id="win-banner" hidden></div>
+    <section id="players-grid"></section>
+    <section id="bottom-panel"></section>
+  </main>
+
+  <main id="setup-screen" hidden>
+    <div class="setup-head">
+      <h1>Подготовка игры</h1>
+      <button class="btn" id="btn-import-tracker" hidden>⬇ Импорт из рейтинга</button>
+    </div>
+    <div class="setup-meta">
+      <label>Турнир / название
+        <input id="meta-title" type="text" maxlength="120" placeholder="Кубок города">
+      </label>
+      <label>Номер игры
+        <input id="meta-number" type="number" min="1" max="99" placeholder="1">
+      </label>
+    </div>
+    <div id="setup-rows"></div>
+    <div class="setup-footer">
+      <div id="roles-summary"></div>
+      <button class="btn btn-big btn-accent" id="btn-start-game">Начать игру</button>
+    </div>
+  </main>
+
+  <main id="finished-screen" hidden>
+    <div class="finished-card">
+      <h1 id="finished-result"></h1>
+      <section id="score-table"></section>
+      <div class="finished-actions">
+        <button class="btn btn-big" id="btn-protocol">Протокол игры</button>
+        <button class="btn btn-big" id="btn-send-tracker" hidden>⬆ Отправить в рейтинг</button>
+        <button class="btn btn-big btn-accent" id="btn-new-after-finish">Новая игра (тот же состав)</button>
+      </div>
+    </div>
+  </main>
+
+  <div id="modal-backdrop" hidden>
+    <div id="modal">
+      <div id="modal-title"></div>
+      <div id="modal-body"></div>
+      <div id="modal-actions"></div>
+    </div>
+  </div>
+
+  <div id="toasts"></div>
+  <datalist id="roster-list"></datalist>
+  <input type="file" id="photo-input" accept="image/jpeg,image/png" hidden>
+
+  <script type="module" src="control.js"></script>
+</body>
+</html>

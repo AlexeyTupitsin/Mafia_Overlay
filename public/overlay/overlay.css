@@ -1,0 +1,342 @@
+/* Оверлей 1920×1080 для OBS Browser Source. Фон прозрачный.
+   Анимации только transform/opacity — стабильно для CEF. */
+
+:root {
+  --c-civilian: #cf3b34;
+  --c-mafia: #15171d;
+  --c-don: #8040c9;
+  --c-sheriff: #e8b31e;
+  --panel-bg: rgba(13, 15, 20, 0.85);
+  --panel-border: rgba(255, 255, 255, 0.10);
+  --text: #f2f4f8;
+  --dim: #8b93a5;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: transparent;
+  overflow: hidden;
+  width: 100vw;
+  height: 100vh;
+  font-family: 'Segoe UI', Roboto, Arial, sans-serif;
+  color: var(--text);
+  user-select: none;
+}
+
+#stage {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1920px;
+  height: 1080px;
+  transform-origin: top left;
+}
+
+/* Появление/скрытие элементов оверлея */
+.ov { transition: opacity 0.4s ease, transform 0.4s ease; }
+.ov.hidden { opacity: 0; pointer-events: none; }
+
+/* ===================== Плашки игроков ===================== */
+
+#plates {
+  position: absolute;
+  left: 40px;
+  right: 40px;
+  bottom: 26px;
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+}
+#plates.hidden { transform: translateY(50px); }
+
+.plate {
+  position: relative;
+  /* ширина фиксированная: длинный ник не расширяет плашку (min-width:0 + усечение ника) */
+  flex: 0 1 139px;
+  min-width: 0;
+  height: 194px;
+  /* цвет роли по умолчанию — нейтральный; переопределяется .role-* */
+  --role: #3a4050;
+  --role-bar: #2c313d;
+  --role-ink: #f2f4f8;
+}
+.plate.role-civilian { --role: var(--c-civilian); --role-bar: var(--c-civilian); --role-ink: #fff; }
+.plate.role-mafia    { --role: #06070a;          --role-bar: #0a0c11;         --role-ink: #fff; }
+.plate.role-don      { --role: var(--c-don);      --role-bar: var(--c-don);     --role-ink: #fff; }
+.plate.role-sheriff  { --role: var(--c-sheriff);  --role-bar: var(--c-sheriff); --role-ink: #15171d; }
+
+.plate-card {
+  position: relative;
+  height: 100%;
+  border-radius: 12px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: linear-gradient(180deg, #272b35, #171a21);
+  border: 2px solid var(--role);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+  transition: border-color 0.3s, box-shadow 0.3s, filter 0.4s, opacity 0.4s,
+    transform 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.plate-photo {
+  flex: 1;
+  position: relative;
+  background-color: #10131a;
+  background-size: cover;
+  background-position: center top;
+}
+.plate-photo .placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #3c4356;
+}
+
+/* нижняя плашка: тёмный бокс номера + ник заглавными */
+.plate-name {
+  height: 41px;
+  display: flex;
+  align-items: stretch;
+  background: var(--role-bar);
+  color: var(--role-ink);
+  transition: background-color 0.3s;
+}
+.plate-name .num {
+  width: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  font-weight: 800;
+  background: rgba(0, 0, 0, 0.32);
+  flex-shrink: 0;
+}
+.plate-name .nick {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 6px;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* отдельный квадратик с иконкой роли в левом верхнем углу */
+.plate-role-ico {
+  position: absolute;
+  top: 7px;
+  left: 7px;
+  width: 29px;
+  height: 29px;
+  border-radius: 7px;
+  background: var(--role);
+  color: var(--role-ink);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+  z-index: 2;
+}
+.plate-role-ico:empty { display: none; }
+
+/* отдельный квадратик статуса выбывания в правом верхнем углу */
+.plate-status-ico {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 29px;
+  height: 29px;
+  border-radius: 7px;
+  background: rgba(8, 9, 12, 0.82);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+  z-index: 2;
+}
+.plate-status-ico:empty { display: none; }
+
+/* фолы: до 4 точек в нижнем левом углу фото */
+.plate-fouls {
+  position: absolute;
+  left: 7px;
+  bottom: 7px;
+  display: flex;
+  gap: 5px;
+  z-index: 1;
+}
+.plate-fouls .dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: rgba(10, 12, 16, 0.6);
+  border: 1.8px solid rgba(255, 255, 255, 0.4);
+}
+.plate-fouls .dot.on { background: #f5a623; border-color: #f5a623; }
+.plate-fouls .dot.on.warn { background: #ff6a00; border-color: #ff6a00; }
+.plate-fouls .dot.on.last { background: #e02b2b; border-color: #e02b2b; }
+
+/* выбывшие: чёрно-белая карточка, сдвинута чуть вниз */
+.plate.out .plate-card {
+  filter: grayscale(1) brightness(0.5);
+  transform: translateY(12px);
+}
+
+/* активный спикер: жёлтая подсветка, карточка выдвигается вверх */
+.plate.speaking .plate-card {
+  border-color: var(--c-sheriff);
+  box-shadow: 0 0 28px rgba(232, 179, 30, 0.65), 0 8px 18px rgba(0, 0, 0, 0.5);
+  transform: translateY(-12px);
+}
+
+/* ===================== Трекер ===================== */
+
+#tracker {
+  position: absolute;
+  left: 40px;
+  top: 36px;
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  padding: 12px 16px 14px;
+  backdrop-filter: blur(4px);
+  /* трекер уменьшен на 20% относительно левого-верхнего угла */
+  transform: scale(0.8);
+  transform-origin: top left;
+}
+#tracker.hidden { transform: translateX(-40px) scale(0.8); }
+
+.tr-best {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 9px;
+  margin-bottom: 9px;
+  border-bottom: 1px solid var(--panel-border);
+  min-height: 34px;
+}
+.tr-best .lbl { font-size: 15px; font-weight: 700; color: var(--dim); letter-spacing: 0.06em; }
+.tr-best .pick {
+  width: 30px;
+  height: 30px;
+  border-radius: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 17px;
+  font-weight: 800;
+  background: #2c313d;
+}
+.tr-best .none { color: var(--dim); font-size: 14px; }
+
+/* колонки добавляются динамически — трекер растёт вправо */
+#tracker table { border-collapse: collapse; }
+#tracker th, #tracker td {
+  min-width: 40px;
+  height: 36px;
+  text-align: center;
+  font-size: 18px;
+  font-weight: 700;
+  padding: 0 2px;
+}
+#tracker td.row-ico {
+  min-width: 36px;
+  color: var(--dim);
+  font-size: 15px;
+}
+#tracker th {
+  font-size: 13px;
+  color: var(--dim);
+  font-weight: 600;
+  height: 22px;
+}
+#tracker td .cellv { position: relative; display: inline-block; line-height: 1; }
+#tracker td .dotcell {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.14);
+}
+#tracker td .miss { color: var(--dim); font-size: 15px; }
+
+.seat-c-civilian { color: #ff6b5e; }
+.seat-c-mafia { color: #aeb6c8; }
+.seat-c-don { color: #b07ce8; }
+.seat-c-sheriff { color: #f3c93f; }
+.seat-c-none { color: var(--text); }
+
+/* ===================== Бар голосования ===================== */
+
+/* бар выставленных кандидатов — справа от трекера (left задаётся в JS) */
+#voting-bar {
+  position: absolute;
+  top: 36px;
+  left: 360px;
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  padding: 6px 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  backdrop-filter: blur(4px);
+}
+#voting-bar.hidden { transform: translateX(-20px); }
+
+.vb-stage {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--dim);
+  padding-right: 6px;
+  border-right: 1px solid var(--panel-border);
+  max-width: 110px;
+}
+
+/* чип кандидатуры: только номер выставленного (без голосов) */
+.vote-chip {
+  display: flex;
+  align-items: center;
+  background: #262b36;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  transition: opacity 0.3s;
+}
+.vote-chip .num {
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+/* ===================== Название игры ===================== */
+
+#title-badge {
+  position: absolute;
+  top: 36px;
+  right: 40px;
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  padding: 10px 18px;
+  text-align: right;
+  backdrop-filter: blur(4px);
+}
+#title-badge.hidden { transform: translateY(-40px); }
+#title-badge .t { font-size: 19px; font-weight: 800; letter-spacing: 0.03em; }
+#title-badge .g { font-size: 13px; color: var(--dim); font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; }
+#title-badge .g:empty { display: none; }
