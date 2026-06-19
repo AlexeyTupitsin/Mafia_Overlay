@@ -34,6 +34,8 @@ app.use('/overlay', express.static(path.join(ROOT, 'public', 'overlay')));
 app.use('/shared', express.static(path.join(ROOT, 'public', 'shared')));
 app.use('/uploads', express.static(persistence.UPLOADS_DIR, { maxAge: '7d' }));
 app.use('/api', createRouter());
+// диагностика старых браузеров (ES5-страница, проверяет фичи и связь по WS)
+app.get('/diag', (req, res) => res.sendFile(path.join(ROOT, 'public', 'diag.html')));
 app.get('/', (req, res) => res.redirect('/control'));
 
 const server = http.createServer(app);

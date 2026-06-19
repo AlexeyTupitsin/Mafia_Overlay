@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Диагностика — мафия</title>
+<style>
+  body { font-family: -apple-system, Arial, sans-serif; background: #14161c; color: #eef1f6;
+         margin: 0; padding: 16px; font-size: 16px; line-height: 1.4; }
+  h1 { font-size: 20px; margin: 0 0 12px; }
+  h2 { font-size: 16px; margin: 20px 0 8px; color: #8b93a5; }
+  .row { padding: 8px 10px; border-radius: 8px; margin: 4px 0; background: #1d212a;
+         display: flex; justify-content: space-between; align-items: center; }
+  .ok  { color: #4caf50; font-weight: bold; }
+  .bad { color: #ff5252; font-weight: bold; }
+  .name { flex: 1; padding-right: 10px; }
+  #ua { word-break: break-all; background: #262b36; padding: 10px; border-radius: 8px; font-size: 13px; }
+  #verdict { margin-top: 16px; padding: 14px; border-radius: 10px; background: #262b36; font-size: 15px; }
+  #verdict.fail { background: #3a1f22; }
+  #verdict.pass { background: #1f3a26; }
+  #ws { font-weight: bold; }
+</style>
+</head>
+<body>
+<h1>Диагностика браузера планшета</h1>
+<p>Покажите этот экран целиком (или сфотографируйте).</p>
+
+<h2>Браузер</h2>
+<div id="ua">…</div>
+
+<h2>Поддержка возможностей</h2>
+<div id="features"></div>
+
+<h2>Связь с сервером (WebSocket)</h2>
+<div class="row"><span class="name">Подключение к серверу</span><span id="ws">проверяем…</span></div>
+
+<div id="verdict">Идёт проверка…</div>
+
+<script>
+/* Намеренно только ES5: var, function, конкатенация строк — чтобы страница
+   выполнилась даже на очень старом браузере и показала, что он умеет. */
+(function () {
+  document.getElementById('ua').textContent = navigator.userAgent;
+
+  var box = document.getElementById('features');
+
+  function add(name, ok, note) {
+    var row = document.createElement('div');
+    row.className = 'row';
+    var n = document.createElement('span');
+    n.className = 'name';
+    n.textContent = name + (note ? ' — ' + note : '');
+    var v = document.createElement('span');
+    v.className = ok ? 'ok' : 'bad';
+    v.textContent = ok ? 'есть' : 'НЕТ';
+    row.appendChild(n); row.appendChild(v);
+    box.appendChild(row);
+    return ok;
+  }
+
+  /* проверка синтаксиса через eval в try/catch: если браузер не понимает
+     конструкцию, выбросит SyntaxError ещё на разборе — это и есть «НЕТ» */
+  function supports(code) {
+    try { /* jshint evil:true */ eval(code); return true; }
+    catch (e) { return false; }
+  }
+
+  var modules    = ('noModule' in document.createElement('script'));
+  var nullish    = supports('0 ?? 1');           // ES2020
+  var optChain   = supports('({}).a?.b');         // ES2020
+  var arrow      = supports('(function(){return (()=>0)})()');
+  var template   = supports('`x`');
+  var promise    = (typeof Promise !== 'undefined');
+  var fetchOk    = (typeof fetch !== 'undefined');
+  var wsOk       = (typeof WebSocket !== 'undefined');
+
+  add('ES-модули (type="module")', modules);
+  add('Оператор ?? (nullish)', nullish, 'нужен панели');
+  add('Оператор ?. (optional chaining)', optChain, 'нужен панели');
+  add('Стрелочные функции', arrow);
+  add('Шаблонные строки', template);
+  add('Promise', promise);
+  add('fetch()', fetchOk);
+  add('WebSocket', wsOk);
+
+  /* критичное для запуска панели: модули + ?? + ?. */
+  var canRunApp = modules && nullish && optChain && arrow && template;
+
+  /* реальная попытка подключения к серверу */
+  var wsEl = document.getElementById('ws');
+  var wsState = 'pending';
+  function setWs(text, cls) { wsEl.textContent = text; wsEl.className = cls; }
+
+  if (!wsOk) {
+    setWs('браузер не умеет WebSocket', 'bad');
+    wsState = 'error';
+    finish();
+  } else {
+    try {
+      var proto = (location.protocol === 'https:') ? 'wss' : 'ws';
+      var sock = new WebSocket(proto + '://' + location.host + '/ws?role=control');
+      var done = false;
+      var timer = setTimeout(function () {
+        if (done) return; done = true;
+        setWs('нет ответа за 6 с (сеть/файрвол/другой адрес?)', 'bad');
+        wsState = 'timeout'; finish();
+      }, 6000);
+      sock.onopen = function () {
+        if (done) return; done = true; clearTimeout(timer);
+        setWs('подключено ✓', 'ok'); wsState = 'open';
+        try { sock.close(); } catch (e) {}
+        finish();
+      };
+      sock.onerror = function () {
+        if (done) return; done = true; clearTimeout(timer);
+        setWs('ошибка подключения', 'bad'); wsState = 'error'; finish();
+      };
+    } catch (e) {
+      setWs('исключение: ' + e.message, 'bad'); wsState = 'error'; finish();
+    }
+  }
+
+  var finished = false;
+  function finish() {
+    if (finished) return; finished = true;
+    var vEl = document.getElementById('verdict');
+    var msg, cls;
+    if (!canRunApp) {
+      var miss = [];
+      if (!modules) miss.push('ES-модули');
+      if (!nullish) miss.push('оператор ??');
+      if (!optChain) miss.push('оператор ?.');
+      if (!arrow) miss.push('стрелочные функции');
+      if (!template) miss.push('шаблонные строки');
+      cls = 'fail';
+      msg = 'ПРИЧИНА НАЙДЕНА: браузер не поддерживает ' + miss.join(', ') +
+            '. Поэтому скрипт панели не запускается (красная точка и «…» остаются). ' +
+            'Решение — собрать клиент под старый браузер (транспиляция).';
+    } else if (wsState === 'open') {
+      cls = 'pass';
+      msg = 'Браузер поддерживает всё необходимое И подключение к серверу прошло. ' +
+            'Панель должна работать. Если на ней всё равно «нет связи» — дело не в браузере.';
+    } else {
+      cls = 'fail';
+      msg = 'Браузер поддерживает нужный синтаксис, НО подключение к серверу не удалось (' +
+            wsState + '). Похоже на сетевую проблему: неверный адрес/порт, файрвол ' +
+            'или другая Wi-Fi-сеть, а не старый браузер.';
+    }
+    vEl.className = cls;
+    vEl.textContent = msg;
+  }
+})();
+</script>
+</body>
+</html>
