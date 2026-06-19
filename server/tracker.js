@@ -51,14 +51,28 @@ async function rest(restPath, { method = 'GET', body } = {}) {
   return text ? JSON.parse(text) : null;
 }
 
-// Игроки трекера для импорта. avatar_url уже хранится как полный публичный URL
-// Supabase Storage — браузер OBS загрузит его напрямую, перезаливка не нужна.
+// avatar_url в трекере хранится непоследовательно: у части игроков это полный
+// публичный URL Supabase, у части — относительный путь фронтенда трекера
+// (/supabase-proxy/...), который у трекера переписывается прокси на Supabase.
+// Импортируя такой путь как есть, оверлей резолвил бы его относительно своего
+// origin → 404 → фото не грузилось. Достраиваем относительный путь до абсолютного.
+export function normalizeAvatar(url, supabaseUrl) {
+  if (!url) return null;
+  if (/^https?:\/\//.test(url)) return url; // уже абсолютный
+  if (url.startsWith('/supabase-proxy/') && supabaseUrl) {
+    return supabaseUrl + url.slice('/supabase-proxy'.length);
+  }
+  return url; // /uploads и прочие локальные пути — оставляем
+}
+
+// Игроки трекера для импорта.
 export async function getPlayers() {
+  const { supabaseUrl } = getConfig();
   const rows = await rest('players?select=id,nickname,avatar_url&order=nickname');
   return rows.map((r) => ({
     id: r.id,
     nickname: r.nickname,
-    avatarUrl: r.avatar_url || null
+    avatarUrl: normalizeAvatar(r.avatar_url, supabaseUrl)
   }));
 }
 

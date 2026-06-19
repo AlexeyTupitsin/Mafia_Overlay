@@ -2,7 +2,7 @@
 // Сеть не нужна — global.fetch мокается.
 
 import {
-  getPlayers, isEnabled, mapRole, mapWinner, playerResult, buildGamePayload
+  getPlayers, isEnabled, mapRole, mapWinner, playerResult, buildGamePayload, normalizeAvatar
 } from '../server/tracker.js';
 
 let pass = 0;
@@ -44,6 +44,19 @@ try {
 } finally {
   global.fetch = origFetch;
 }
+
+// normalizeAvatar: относительный путь фронтенда трекера → абсолютный URL Supabase.
+const SB = 'https://proj.supabase.co';
+check('normalizeAvatar: пусто → null', normalizeAvatar('', SB) === null && normalizeAvatar(null, SB) === null);
+check('normalizeAvatar: абсолютный http остаётся как есть',
+  normalizeAvatar('https://x.supabase.co/storage/a.jpg', SB) === 'https://x.supabase.co/storage/a.jpg');
+check('normalizeAvatar: /supabase-proxy/ → абсолютный URL Supabase',
+  normalizeAvatar('/supabase-proxy/storage/v1/object/public/avatars/u/1.png', SB)
+    === 'https://proj.supabase.co/storage/v1/object/public/avatars/u/1.png');
+check('normalizeAvatar: /uploads/ не трогаем',
+  normalizeAvatar('/uploads/abc.jpg', SB) === '/uploads/abc.jpg');
+check('normalizeAvatar: без supabaseUrl относительный путь остаётся как есть (нечем достроить)',
+  normalizeAvatar('/supabase-proxy/storage/x.png', '') === '/supabase-proxy/storage/x.png');
 
 // --- чистые функции маппинга отправки игры ---
 
