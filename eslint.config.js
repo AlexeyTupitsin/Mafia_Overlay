@@ -14,6 +14,7 @@ export default [
         clearTimeout: 'readonly',
         URL: 'readonly',
         fetch: 'readonly',
+        Buffer: 'readonly',
         structuredClone: 'readonly'
       }
     }

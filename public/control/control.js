@@ -710,7 +710,10 @@ $('#btn-import-tracker').onclick = async () => {
     const res = await fetch('/api/tracker/import-players', { method: 'POST' });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Ошибка импорта');
-    toast(`Импортировано игроков: ${data.imported}`, 'info');
+    const photoInfo = data.photos !== undefined
+      ? ` (фото: ${data.photos}${data.photosFailed ? `, не удалось: ${data.photosFailed}` : ''})`
+      : '';
+    toast(`Импортировано игроков: ${data.imported}${photoInfo}`, 'info');
     await loadRoster(); // обновляем datalist — ники сразу доступны при вводе
   } catch (err) {
     toast(err.message);

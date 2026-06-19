@@ -1,11 +1,9 @@
 // REST API: загрузка фото, справочник игроков, архив игр, экспорт протокола
 
-import path from 'node:path';
-import { randomUUID } from 'node:crypto';
 import express from 'express';
 import multer from 'multer';
-import sharp from 'sharp';
 import * as persistence from './persistence.js';
+import * as images from './images.js';
 import * as tracker from './tracker.js';
 import * as store from './store.js';
 import { displayBase, totalScore } from '../public/shared/constants.js';
@@ -38,14 +36,8 @@ export function createRouter() {
   router.post('/upload', upload.single('photo'), async (req, res) => {
     try {
       if (!req.file) return res.status(400).json({ error: 'Файл не получен (поле photo)' });
-      const isPng = req.file.mimetype === 'image/png';
-      const name = `${randomUUID()}.${isPng ? 'png' : 'jpg'}`;
-      let img = sharp(req.file.buffer)
-        .rotate()
-        .resize(600, 600, { fit: 'inside', withoutEnlargement: true });
-      img = isPng ? img.png() : img.jpeg({ quality: 85 });
-      await img.toFile(path.join(persistence.UPLOADS_DIR, name));
-      res.json({ url: `/uploads/${name}` });
+      const url = await images.saveImageBuffer(req.file.buffer);
+      res.json({ url });
     } catch (err) {
       console.error('[upload]', err.message);
       res.status(500).json({ error: 'Не удалось обработать изображение' });
@@ -87,14 +79,28 @@ export function createRouter() {
     }
     try {
       const players = await tracker.getPlayers();
+      let photos = 0;
+      let photosFailed = 0;
       for (const p of players) {
+        // аватар скачиваем локально в uploads/ — надёжнее для OBS, чем внешний
+        // URL Supabase. Не скачалось → пропускаем фото, импорт не прерывается.
+        let photo;
+        if (p.avatarUrl) {
+          try {
+            photo = await images.downloadAndSaveAvatar(p.avatarUrl);
+            photos += 1;
+          } catch (e) {
+            console.error('[tracker] аватар не скачан:', p.nickname, e.message);
+            photosFailed += 1;
+          }
+        }
         persistence.upsertRosterPlayer({
           nickname: p.nickname,
-          photo: p.avatarUrl || undefined, // нет аватара → не трогаем фото в ростере
+          photo, // undefined → не трогаем существующее фото в ростере
           trackerId: p.id
         });
       }
-      res.json({ imported: players.length });
+      res.json({ imported: players.length, photos, photosFailed });
     } catch (err) {
       console.error('[tracker] import-players', err.message);
       res.status(502).json({ error: `Трекер недоступен: ${err.message}` });
