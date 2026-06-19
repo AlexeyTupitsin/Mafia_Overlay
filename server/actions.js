@@ -32,12 +32,13 @@ const RESULT_LABELS = {
 // Действия, перед которыми НЕ делается снапшот для undo (см. B.4)
 export const NOT_UNDOABLE = new Set([
   'UNDO', 'TIMER_START', 'TIMER_PAUSE', 'TIMER_RESET', 'SET_OVERLAY_VISIBILITY',
-  'SET_TRACKER_GAME_ID'
+  'SET_TRACKER_GAME_ID', 'SET_COMMENT'
 ]);
 
 // Действия, не попадающие в протокол игры
 export const NOT_LOGGED = new Set([
-  'UNDO', 'TIMER_START', 'TIMER_PAUSE', 'TIMER_RESET', 'SET_OVERLAY_VISIBILITY'
+  'UNDO', 'TIMER_START', 'TIMER_PAUSE', 'TIMER_RESET', 'SET_OVERLAY_VISIBILITY',
+  'SET_COMMENT'
 ]);
 
 function getPlayer(state, seat) {
@@ -485,6 +486,12 @@ export const handlers = {
     if (p.comment !== undefined) {
       player.comment = String(p.comment).slice(0, 300);
     }
+  },
+
+  // Заметка по игроку по ходу игры. Пишет то же поле comment, что и SET_SCORE,
+  // но доступно в любом состоянии (SET_SCORE — только после finished).
+  SET_COMMENT(state, p) {
+    getPlayer(state, p.seat).comment = String(p.comment).slice(0, 300);
   },
 
   SET_OVERLAY_VISIBILITY(state, p) {

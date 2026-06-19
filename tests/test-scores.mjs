@@ -40,7 +40,13 @@ ws.on('open', async () => {
   await act('SET_SCORE', { seat: 1, bonus: 0.5 });
   check('баллы до finish отклонены', lastError !== null);
 
+  // заметка по ходу игры пишет то же поле comment и доступна до завершения
+  await act('SET_COMMENT', { seat: 1, comment: 'тихий в первом круге' });
+  check('заметка по ходу игры сохранена', lastError === null && state.players[0].comment === 'тихий в первом круге');
+
   await act('FINISH_GAME', { result: 'mafia_win' });
+  check('заметка видна в сетке подсчёта после finish', state.players[0].comment === 'тихий в первом круге');
+
   check('игра завершена', state.meta.status === 'finished' && state.meta.result === 'mafia_win');
 
   await act('SET_SCORE', { seat: 7, bonus: 0.3 });

@@ -14,6 +14,7 @@ let clockOffset = 0;                 // serverNow − Date.now(): поправк
 
 // локальное состояние интерфейса (не синхронизируется)
 let statusMenuSeat = null;          // открытый попап статуса
+let noteSeat = null;                 // открытое поле заметки в строке игрока
 let heldBlocks = new Set();         // секретные блоки, раскрытые удержанием
 let peekRoles = new Set();          // роли игроков, раскрытые удержанием
 let winDismissedKey = null;         // отложенный баннер победы (ключ ситуации)
@@ -326,7 +327,11 @@ const grid = $('#players-grid');
 grid.addEventListener('click', (e) => {
   const btn = e.target.closest('[data-act]');
   if (!btn) {
-    if (!e.target.closest('.status-pop')) { statusMenuSeat = null; render(); }
+    if (!e.target.closest('.status-pop') && !e.target.closest('.note-pop')) {
+      statusMenuSeat = null;
+      noteSeat = null;
+      render();
+    }
     return;
   }
   const seat = Number(btn.dataset.seat);
@@ -353,13 +358,32 @@ grid.addEventListener('click', (e) => {
       break;
     case 'status-menu':
       statusMenuSeat = statusMenuSeat === seat ? null : seat;
+      noteSeat = null;
       render();
+      break;
+    case 'note':
+      noteSeat = noteSeat === seat ? null : seat;
+      statusMenuSeat = null;
+      render();
+      if (noteSeat === seat) grid.querySelector('.note-pop input')?.focus();
       break;
     case 'set-status':
       send('SET_STATUS', { seat, status: btn.dataset.status });
       statusMenuSeat = null;
       break;
   }
+});
+
+// ввод заметки по игроку: change (blur/Enter) → SET_COMMENT
+grid.addEventListener('change', (e) => {
+  const input = e.target.closest('.note-pop input');
+  if (!input) return;
+  send('SET_COMMENT', { seat: Number(input.dataset.seat), comment: input.value });
+});
+
+// Enter в поле заметки — зафиксировать и закрыть
+grid.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && e.target.closest('.note-pop input')) e.target.blur();
 });
 
 // удержание кнопки «роль» — показать роль игрока, пока кнопка зажата
@@ -400,6 +424,11 @@ function renderPlayersList() {
         ${Object.entries(STATUSES).map(([key, st]) =>
           `<button class="btn ${p.status === key ? 'active' : ''}" data-act="set-status" data-seat="${p.seat}" data-status="${key}">${st.label}</button>`).join('')}
       </div>` : '';
+    const hasNote = !!(p.comment && p.comment.trim());
+    const notePop = noteSeat === p.seat ? `
+      <div class="note-pop">
+        <input type="text" maxlength="300" data-seat="${p.seat}" value="${esc(p.comment)}" placeholder="Заметка по игроку…">
+      </div>` : '';
     return `
       <div class="prow ${out ? 'out' : ''} ${speaking ? 'speaking' : ''}">
         <span class="prow-num">${p.seat}</span>
@@ -417,9 +446,11 @@ function renderPlayersList() {
           <button class="btn ${speaking ? 'active' : ''}" data-act="speaker" data-seat="${p.seat}" ${out ? 'disabled' : ''}>🎙 Слово</button>
           <button class="btn" data-act="nominate" data-seat="${p.seat}" ${out || !speakerCanNominate || nominatedSeats.has(p.seat) ? 'disabled' : ''} title="${speaker === null ? 'Сначала выдайте слово' : ''}">☝ Выставить</button>
           <button class="btn btn-peek" data-act="peek-role" data-seat="${p.seat}" title="Удерживайте, чтобы увидеть роль">🎭</button>
+          <button class="btn btn-note ${hasNote ? 'has-note' : ''}" data-act="note" data-seat="${p.seat}" title="Заметка по игроку">📝</button>
           <button class="btn" data-act="status-menu" data-seat="${p.seat}">⋮</button>
         </div>
         ${statusPop}
+        ${notePop}
       </div>`;
   }).join('');
 }

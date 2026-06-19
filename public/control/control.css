@@ -221,6 +221,26 @@ main { padding: 14px 16px 22px; }
 }
 .status-pop .btn { font-size: 14px; min-height: 42px; }
 
+.btn-note { padding: 6px 12px; font-size: 16px; }
+.btn-note.has-note { background: var(--c-sheriff); border-color: var(--c-sheriff); }
+
+/* поле заметки раскрывается отдельной строкой под действиями игрока */
+.note-pop {
+  flex-basis: 100%;
+  order: 99;
+  padding: 4px 2px 2px;
+}
+.note-pop input {
+  width: 100%;
+  font-size: 15px;
+  padding: 8px 10px;
+  background: var(--panel2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.note-pop input:focus { outline: none; border-color: var(--c-sheriff); }
+
 #best-move-banner,
 #win-banner {
   margin-bottom: 12px;
