@@ -986,8 +986,7 @@ function render() {
   } else if (status === 'finished') {
     $('#finished-result').textContent = RESULTS[state.meta.result] || 'Игра завершена';
     const sendBtn = $('#btn-send-tracker');
-    // отправка игры в рейтинг временно скрыта
-    sendBtn.hidden = true;
+    sendBtn.hidden = !trackerEnabled;
     const sent = !!state.meta.trackerGameId;
     sendBtn.textContent = sent ? 'Отправлено ✓' : '⬆ Отправить в рейтинг';
     sendBtn.disabled = sent;
