@@ -10,7 +10,7 @@
   "scripts": {
     "start": "node server/index.js",
     "lint": "eslint server public tests tools",
-    "test": "node --test --test-concurrency=1 \"tests/test-*.mjs\""
+    "test": "node --test --test-concurrency=1"
   },
   "dependencies": {
     "express": "^4.21.2",
