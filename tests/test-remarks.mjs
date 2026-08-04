@@ -1,119 +1,131 @@
-// Тест правок по замечаниям заказчика (docs/Замечания.txt). Запуск: node test-remarks.mjs
-import WebSocket from 'ws';
+// Правки по замечаниям заказчика (docs/Замечания.txt): лимит суммы голосов,
+// логика попила и ночные проверки.
 
-const ws = new WebSocket('ws://localhost:3000/ws?role=control');
-let state = null;
-let lastError = null;
-let failures = 0;
+import { test, before, after } from 'node:test';
+import assert from 'node:assert/strict';
+import { startServer } from './helpers/server.mjs';
+import { connect, startGame } from './helpers/client.mjs';
 
-const waitMsg = () => new Promise((resolve) => ws.once('message', (d) => {
-  const msg = JSON.parse(d.toString());
-  if (msg.type === 'state') state = msg.state;
-  if (msg.type === 'error') lastError = msg.message;
-  resolve(msg);
-}));
+let server;
+let c;
 
-async function act(type, payload) {
-  lastError = null;
-  ws.send(JSON.stringify({ type: 'action', action: { type, payload } }));
-  let msg;
-  do { msg = await waitMsg(); } while (msg.type !== 'state' && msg.type !== 'error');
-  return msg;
+// Кандидатуру выставляет тот, у кого слово, и только одну — отсюда передача
+// слова перед каждой номинацией (actions.js: NOMINATE).
+async function nominate(seats, speakers) {
+  for (let i = 0; i < seats.length; i++) {
+    await c.act('SET_SPEAKER', { seat: speakers[i] });
+    await c.act('NOMINATE', { seat: seats[i] });
+  }
 }
 
-function check(name, cond) {
-  if (cond) console.log(`  ok: ${name}`);
-  else { failures++; console.log(`  FAIL: ${name}${lastError ? ` (server: ${lastError})` : ''}`); }
-}
-
-ws.on('open', async () => {
-  await waitMsg();
-
-  console.log('— Подготовка');
-  await act('NEW_GAME', { title: 'Тест замечаний', gameNumber: 1, carryPlayers: false });
-  for (let s = 1; s <= 10; s++) await act('SET_PLAYER', { seat: s, nickname: `Игрок${s}` });
-  for (let s = 1; s <= 6; s++) await act('SET_ROLE', { seat: s, role: 'civilian' });
-  await act('SET_ROLE', { seat: 7, role: 'mafia' });
-  await act('SET_ROLE', { seat: 8, role: 'mafia' });
-  await act('SET_ROLE', { seat: 9, role: 'don' });
-  await act('SET_ROLE', { seat: 10, role: 'sheriff' });
-  await act('START_GAME');
-  check('игра началась', state.meta.status === 'in_progress');
-
-  console.log('— 4.1: лимит суммы голосов');
-  await act('NOMINATE', { seat: 1 });
-  await act('NOMINATE', { seat: 2 });
-  await act('VOTING_START');
-  await act('SET_VOTES', { seat: 1, votes: 6 });
-  await act('SET_VOTES', { seat: 2, votes: 5 });
-  check('6+5 > 10 отклонено', lastError !== null && state.voting.nominations[1].votes === 0);
-  await act('SET_VOTES', { seat: 2, votes: 4 });
-  check('6+4 = 10 принято', lastError === null && state.voting.nominations[1].votes === 4);
-
-  console.log('— 4.2: попил 3-3-3-1 → 5-5 → повторное → 5-5 → подъём');
-  await act('UNNOMINATE', { seat: 1 }); // вернуться нельзя — голосование идёт; проверим отказ
-  check('снятие при активном голосовании отклонено', lastError !== null);
-  await act('SET_VOTES', { seat: 1, votes: 4 });
-  await act('VOTING_FINISH'); // 4-4 → перестрелка (день 1, 2 кандидатуры)
-  check('первая ничья → перестрелка', state.voting.stage === 'revote');
-  // имитация 3-3-3-1 невозможна с 2 кандидатурами — проверяем частичную ничью на 4 кандидатурах ниже
-  await act('SET_VOTES', { seat: 1, votes: 5 });
-  await act('SET_VOTES', { seat: 2, votes: 5 });
-  await act('VOTING_FINISH'); // 5-5 при тех же кандидатурах → подъём
-  check('повторное равенство тех же → поднять всех', state.voting.stage === 'lift_all');
-  await act('LIFT_ALL', { votes: 4, passed: false });
-  check('остались за столом', state.players[0].status === 'alive' && state.voting.stage === 'done');
-
-  console.log('— 4.2: частичная ничья → ещё одна перестрелка (не подъём)');
-  await act('NEXT_PHASE'); // ночь 1
-  await act('SET_SHOT', { seat: null }); // промах
-  await act('NEXT_PHASE'); // день 2
-  await act('NOMINATE', { seat: 1 });
-  await act('NOMINATE', { seat: 2 });
-  await act('NOMINATE', { seat: 3 });
-  await act('NOMINATE', { seat: 4 });
-  await act('VOTING_START');
-  await act('SET_VOTES', { seat: 1, votes: 3 });
-  await act('SET_VOTES', { seat: 2, votes: 3 });
-  await act('SET_VOTES', { seat: 3, votes: 3 });
-  await act('SET_VOTES', { seat: 4, votes: 1 });
-  await act('VOTING_FINISH'); // 3-3-3-1 → перестрелка трёх
-  check('3-3-3-1 → перестрелка трёх', state.voting.stage === 'revote' && state.voting.nominations.length === 3);
-  await act('SET_VOTES', { seat: 1, votes: 5 });
-  await act('SET_VOTES', { seat: 2, votes: 5 });
-  await act('VOTING_FINISH'); // 5-5-0 — лидеров меньше, чем кандидатур → снова перестрелка
-  check('5-5-0 → повторная перестрелка, не подъём', state.voting.stage === 'revote' && state.voting.nominations.length === 2);
-  await act('SET_VOTES', { seat: 1, votes: 5 });
-  await act('SET_VOTES', { seat: 2, votes: 5 });
-  await act('VOTING_FINISH'); // 5-5 при тех же → подъём
-  check('5-5 при тех же → поднять всех', state.voting.stage === 'lift_all');
-  await act('LIFT_ALL', { votes: 4, passed: false });
-
-  console.log('— 5: ночные проверки');
-  await act('NEXT_PHASE'); // ночь 2
-  await act('SET_SHOT', { seat: 5 });
-  check('№5 убит', state.players[4].status === 'killed');
-  await act('SET_DON_CHECK', { seat: 5 });
-  check('5.3: проверка выбывшего разрешена', lastError === null && state.nights[1].donCheck.seat === 5);
-  check('результат вычислен автоматически (мирный — не шериф)', state.nights[1].donCheck.found === false);
-  await act('SET_DON_CHECK', { seat: 10 });
-  check('дон нашёл шерифа (авто)', state.nights[1].donCheck.found === true);
-  await act('SET_SHERIFF_CHECK', { seat: 7 });
-  check('шериф нашёл мафию (авто)', state.nights[1].sheriffCheck.found === true);
-  await act('SET_SHERIFF_CHECK', { seat: null });
-  check('5.2: шериф может никого не проверять', lastError === null && state.nights[1].sheriffCheck === null);
-
-  console.log('— 5.4: выбывший дон/шериф не проверяет');
-  await act('SET_STATUS', { seat: 9, status: 'removed' }); // дон удалён
-  await act('SET_DON_CHECK', { seat: 1 });
-  check('проверка выбывшего дона отклонена', lastError !== null);
-  await act('SET_STATUS', { seat: 9, status: 'alive' });
-  await act('SET_SHOT', { seat: 10 }); // шериф отстрелян этой ночью
-  await act('SET_SHERIFF_CHECK', { seat: 7 });
-  check('отстрелянный этой ночью шериф ещё проверяет', lastError === null && state.nights[1].sheriffCheck.seat === 7);
-
-  console.log(failures === 0 ? '\nВСЕ ПРОВЕРКИ ПРОЙДЕНЫ' : `\nПРОВАЛОВ: ${failures}`);
-  process.exit(failures === 0 ? 0 : 1);
+before(async () => {
+  server = await startServer();
+  c = await connect(server);
+  await startGame(c, { title: 'Тест замечаний', gameNumber: 1, nicknames: true });
 });
 
-setTimeout(() => { console.log('Таймаут теста'); process.exit(2); }, 30000);
+after(async () => {
+  c.close();
+  await server.stop();
+  server.cleanup();
+});
+
+test('4.1: сумма голосов больше числа живых отклоняется', async () => {
+  await nominate([1, 2], [3, 4]);
+  await c.act('VOTING_START');
+
+  await c.act('SET_VOTES', { seat: 1, votes: 6 });
+  await c.act('SET_VOTES', { seat: 2, votes: 5 });
+  assert.ok(c.lastError, '6+5 > 10 должно быть отклонено');
+  assert.equal(c.state.voting.nominations[1].votes, 0);
+
+  await c.act('SET_VOTES', { seat: 2, votes: 4 });
+  assert.equal(c.lastError, null);
+  assert.equal(c.state.voting.nominations[1].votes, 4);
+});
+
+test('снятие кандидатуры при идущем голосовании отклоняется', async () => {
+  await c.act('UNNOMINATE', { seat: 1 });
+  assert.ok(c.lastError);
+});
+
+test('4.2: равенство → перестрелка → повторное равенство → подъём', async () => {
+  await c.act('SET_VOTES', { seat: 1, votes: 4 });
+  await c.act('VOTING_FINISH');
+  assert.equal(c.state.voting.stage, 'revote');
+
+  await c.act('SET_VOTES', { seat: 1, votes: 5 });
+  await c.act('SET_VOTES', { seat: 2, votes: 5 });
+  await c.act('VOTING_FINISH');
+  assert.equal(c.state.voting.stage, 'lift_all');
+
+  await c.act('LIFT_ALL', { votes: 4, passed: false });
+  assert.equal(c.state.players[0].status, 'alive');
+  assert.equal(c.state.voting.stage, 'done');
+});
+
+test('4.2: частичная ничья даёт ещё одну перестрелку, а не подъём', async () => {
+  await c.act('NEXT_PHASE');            // ночь 1
+  await c.act('SET_SHOT', { seat: null }); // промах
+  await c.act('NEXT_PHASE');            // день 2
+
+  await nominate([1, 2, 3, 4], [5, 6, 7, 8]);
+  await c.act('VOTING_START');
+  await c.act('SET_VOTES', { seat: 1, votes: 3 });
+  await c.act('SET_VOTES', { seat: 2, votes: 3 });
+  await c.act('SET_VOTES', { seat: 3, votes: 3 });
+  await c.act('SET_VOTES', { seat: 4, votes: 1 });
+  await c.act('VOTING_FINISH');
+  assert.equal(c.state.voting.stage, 'revote');
+  assert.equal(c.state.voting.nominations.length, 3, '3-3-3-1 → перестрелка троих');
+
+  // лидеров меньше, чем кандидатур → снова перестрелка, подъёма быть не должно
+  await c.act('SET_VOTES', { seat: 1, votes: 5 });
+  await c.act('SET_VOTES', { seat: 2, votes: 5 });
+  await c.act('VOTING_FINISH');
+  assert.equal(c.state.voting.stage, 'revote');
+  assert.equal(c.state.voting.nominations.length, 2);
+
+  // те же двое и снова поровну → подъём
+  await c.act('SET_VOTES', { seat: 1, votes: 5 });
+  await c.act('SET_VOTES', { seat: 2, votes: 5 });
+  await c.act('VOTING_FINISH');
+  assert.equal(c.state.voting.stage, 'lift_all');
+
+  await c.act('LIFT_ALL', { votes: 4, passed: false });
+});
+
+test('5.3: проверка выбывшего разрешена, результат считается автоматически', async () => {
+  await c.act('NEXT_PHASE'); // ночь 2
+  await c.act('SET_SHOT', { seat: 5 });
+  assert.equal(c.state.players[4].status, 'killed');
+
+  await c.act('SET_DON_CHECK', { seat: 5 });
+  assert.equal(c.lastError, null);
+  assert.equal(c.state.nights[1].donCheck.seat, 5);
+  assert.equal(c.state.nights[1].donCheck.found, false, 'мирный — не шериф');
+
+  await c.act('SET_DON_CHECK', { seat: 10 });
+  assert.equal(c.state.nights[1].donCheck.found, true, 'дон нашёл шерифа');
+
+  await c.act('SET_SHERIFF_CHECK', { seat: 7 });
+  assert.equal(c.state.nights[1].sheriffCheck.found, true, 'шериф нашёл мафию');
+});
+
+test('5.2: шериф может никого не проверять', async () => {
+  await c.act('SET_SHERIFF_CHECK', { seat: null });
+  assert.equal(c.lastError, null);
+  assert.equal(c.state.nights[1].sheriffCheck, null);
+});
+
+test('5.4: выбывший дон не проверяет, отстрелянный этой ночью шериф — ещё да', async () => {
+  await c.act('SET_STATUS', { seat: 9, status: 'removed' });
+  await c.act('SET_DON_CHECK', { seat: 1 });
+  assert.ok(c.lastError, 'проверка удалённого дона должна быть отклонена');
+
+  await c.act('SET_STATUS', { seat: 9, status: 'alive' });
+  await c.act('SET_SHOT', { seat: 10 }); // шериф отстрелян этой же ночью
+  await c.act('SET_SHERIFF_CHECK', { seat: 7 });
+  assert.equal(c.lastError, null);
+  assert.equal(c.state.nights[1].sheriffCheck.seat, 7);
+});

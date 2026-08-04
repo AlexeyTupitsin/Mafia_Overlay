@@ -120,8 +120,14 @@ export function applyAction(action) {
   const ctx = { createInitialState };
   const replaced = handler(next, payload, ctx);
 
+  // Клонировать здесь нечего: next — уже глубокая копия, а прежний объект
+  // state после присваивания ниже никем не мутируется (обработчики пишут
+  // только в next). Инвариант, на котором это держится: getState() отдаётся
+  // наружу исключительно на чтение — routes.js (buildGamePayload) и
+  // index.js (сериализация). Появится код, мутирующий результат getState(),
+  // — снапшоты undo испортятся, и клон придётся вернуть.
   if (!NOT_UNDOABLE.has(action.type)) {
-    undo.push({ state: structuredClone(state), logIndex: state.log.length, label });
+    undo.push({ state, logIndex: state.log.length, label });
   }
 
   if (action.type === 'NEW_GAME' && state.meta.status !== 'setup') {

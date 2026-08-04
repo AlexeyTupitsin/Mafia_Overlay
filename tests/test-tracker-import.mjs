@@ -1,101 +1,126 @@
-// Юнит-тест импорта из трекера: маппинг players → ростер и проброс ошибок.
+// Импорт игроков из трекера и чистые функции маппинга отправки игры.
 // Сеть не нужна — global.fetch мокается.
 
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
 import {
-  getPlayers, isEnabled, mapRole, mapWinner, playerResult, buildGamePayload, normalizeAvatar
+  getPlayers, isEnabled, mapRole, mapWinner, playerResult, buildGamePayload, normalizeAvatar,
+  buildEqFilter
 } from '../server/tracker.js';
 
-let pass = 0;
-let fail = 0;
-function check(name, cond) {
-  if (cond) { pass += 1; console.log('  ok:', name); }
-  else { fail += 1; console.log('  FAIL:', name); }
-}
+// isEnabled() зависит от локального config.json — проверяем только тип, чтобы
+// тест не зависел от того, настроен ли трекер на машине.
+test('isEnabled() возвращает boolean', () => {
+  assert.equal(typeof isEnabled(), 'boolean');
+});
 
-// isEnabled() зависит от локального config.json — проверяем только тип (не значение,
-// чтобы тест не падал в зависимости от того, настроен ли трекер на машине).
-check('isEnabled() возвращает boolean', typeof isEnabled() === 'boolean');
+test('getPlayers маппит строки трекера в записи ростера', async (t) => {
+  const orig = global.fetch;
+  global.fetch = async () => ({
+    ok: true,
+    text: async () => JSON.stringify([
+      { id: 'uuid-1', nickname: 'Анна', avatar_url: 'https://x.supabase.co/storage/v1/object/public/avatars/a.jpg' },
+      { id: 'uuid-2', nickname: 'Борис', avatar_url: null }
+    ])
+  });
+  t.after(() => { global.fetch = orig; });
 
-const origFetch = global.fetch;
-
-// getPlayers: avatar_url → avatarUrl, отсутствие аватара → null.
-const fakeRows = [
-  { id: 'uuid-1', nickname: 'Анна', avatar_url: 'https://x.supabase.co/storage/v1/object/public/avatars/a.jpg' },
-  { id: 'uuid-2', nickname: 'Борис', avatar_url: null }
-];
-global.fetch = async () => ({ ok: true, text: async () => JSON.stringify(fakeRows) });
-try {
   const players = await getPlayers();
-  check('импортировано 2 игрока', players.length === 2);
-  check('маппинг id/nickname/avatarUrl',
-    players[0].id === 'uuid-1' && players[0].nickname === 'Анна' && players[0].avatarUrl.endsWith('a.jpg'));
-  check('нет аватара → avatarUrl = null', players[1].avatarUrl === null);
-} finally {
-  global.fetch = origFetch;
-}
+  assert.equal(players.length, 2);
+  assert.equal(players[0].id, 'uuid-1');
+  assert.equal(players[0].nickname, 'Анна');
+  assert.match(players[0].avatarUrl, /a\.jpg$/);
+  assert.equal(players[1].avatarUrl, null, 'нет аватара → null');
+});
 
-// Ошибка PostgREST пробрасывается с текстом из тела.
-global.fetch = async () => ({ ok: false, status: 500, text: async () => JSON.stringify({ message: 'boom' }) });
-try {
-  await getPlayers();
-  check('ошибка трекера пробрасывается', false);
-} catch (e) {
-  check('ошибка трекера пробрасывается с текстом', e.message === 'boom');
-} finally {
-  global.fetch = origFetch;
-}
+test('ошибка PostgREST пробрасывается с текстом из тела', async (t) => {
+  const orig = global.fetch;
+  global.fetch = async () => ({ ok: false, status: 500, text: async () => JSON.stringify({ message: 'boom' }) });
+  t.after(() => { global.fetch = orig; });
 
-// normalizeAvatar: относительный путь фронтенда трекера → абсолютный URL Supabase.
-const SB = 'https://proj.supabase.co';
-check('normalizeAvatar: пусто → null', normalizeAvatar('', SB) === null && normalizeAvatar(null, SB) === null);
-check('normalizeAvatar: абсолютный http остаётся как есть',
-  normalizeAvatar('https://x.supabase.co/storage/a.jpg', SB) === 'https://x.supabase.co/storage/a.jpg');
-check('normalizeAvatar: /supabase-proxy/ → абсолютный URL Supabase',
-  normalizeAvatar('/supabase-proxy/storage/v1/object/public/avatars/u/1.png', SB)
-    === 'https://proj.supabase.co/storage/v1/object/public/avatars/u/1.png');
-check('normalizeAvatar: /uploads/ не трогаем',
-  normalizeAvatar('/uploads/abc.jpg', SB) === '/uploads/abc.jpg');
-check('normalizeAvatar: без supabaseUrl относительный путь остаётся как есть (нечем достроить)',
-  normalizeAvatar('/supabase-proxy/storage/x.png', '') === '/supabase-proxy/storage/x.png');
+  await assert.rejects(() => getPlayers(), /^Error: boom$/);
+});
 
-// --- чистые функции маппинга отправки игры ---
+test('normalizeAvatar достраивает относительный путь трекера', () => {
+  const SB = 'https://proj.supabase.co';
+  assert.equal(normalizeAvatar('', SB), null);
+  assert.equal(normalizeAvatar(null, SB), null);
+  assert.equal(normalizeAvatar('https://x.supabase.co/storage/a.jpg', SB), 'https://x.supabase.co/storage/a.jpg');
+  assert.equal(
+    normalizeAvatar('/supabase-proxy/storage/v1/object/public/avatars/u/1.png', SB),
+    'https://proj.supabase.co/storage/v1/object/public/avatars/u/1.png'
+  );
+  assert.equal(normalizeAvatar('/uploads/abc.jpg', SB), '/uploads/abc.jpg', '/uploads не трогаем');
+  assert.equal(
+    normalizeAvatar('/supabase-proxy/storage/x.png', ''),
+    '/supabase-proxy/storage/x.png',
+    'без supabaseUrl достраивать нечем'
+  );
+});
 
-check('mapRole: civilian → citizen', mapRole('civilian') === 'citizen');
-check('mapRole: mafia/don/sheriff без изменений',
-  mapRole('mafia') === 'mafia' && mapRole('don') === 'don' && mapRole('sheriff') === 'sheriff');
+test('buildEqFilter экранирует значения со спецсимволами PostgREST', () => {
+  // Без кавычек запятая разбирается PostgREST как разделитель фильтров:
+  // турнир «Кубок клуба, этап 2» либо не находился, либо давал 400.
+  assert.equal(buildEqFilter('Кубок'), `eq.${encodeURIComponent('"Кубок"')}`);
+  assert.equal(buildEqFilter('Кубок клуба, этап 2'), `eq.${encodeURIComponent('"Кубок клуба, этап 2"')}`);
+  assert.equal(buildEqFilter('Финал (2026)'), `eq.${encodeURIComponent('"Финал (2026)"')}`);
+  assert.equal(buildEqFilter('Кубок "Север"'), `eq.${encodeURIComponent('"Кубок \\"Север\\""')}`);
+});
 
-check('mapWinner: city_win → red', mapWinner('city_win') === 'red');
-check('mapWinner: mafia_win → black', mapWinner('mafia_win') === 'black');
-check('mapWinner: draw → draw', mapWinner('draw') === 'draw');
+test('mapRole переводит мирного в citizen, остальные роли не трогает', () => {
+  assert.equal(mapRole('civilian'), 'citizen');
+  assert.equal(mapRole('mafia'), 'mafia');
+  assert.equal(mapRole('don'), 'don');
+  assert.equal(mapRole('sheriff'), 'sheriff');
+});
 
-check('playerResult: чёрный при победе чёрных → win', playerResult('don', 'black') === 'win');
-check('playerResult: красный при победе чёрных → lose', playerResult('civilian', 'black') === 'lose');
-check('playerResult: ничья → draw для всех', playerResult('sheriff', 'draw') === 'draw');
+test('mapWinner переводит результат в команду', () => {
+  assert.equal(mapWinner('city_win'), 'red');
+  assert.equal(mapWinner('mafia_win'), 'black');
+  assert.equal(mapWinner('draw'), 'draw');
+});
 
-// buildGamePayload на компактном состоянии (победа мафии)
-const roles = ['don', 'mafia', 'civilian', 'sheriff', 'civilian', 'civilian', 'mafia', 'civilian', 'civilian', 'civilian'];
-const state = {
-  meta: { result: 'mafia_win', finishedAt: '2026-06-14T20:30:00.000Z', title: 'Кубок' },
-  bestMove: { by: 3, picks: [2, 7] },
-  players: roles.map((role, i) => ({
-    seat: i + 1, role, trackerId: `id-${i + 1}`,
-    scoreBase: null, scoreBonus: i === 2 ? 0.5 : 0, comment: i === 2 ? 'ЛХ' : ''
-  }))
-};
-const { game, gamePlayers } = buildGamePayload(state, 'season-1', 'tour-1', 12);
+test('playerResult считает исход по роли и победителю', () => {
+  assert.equal(playerResult('don', 'black'), 'win');
+  assert.equal(playerResult('civilian', 'black'), 'lose');
+  assert.equal(playerResult('sheriff', 'draw'), 'draw');
+});
 
-check('payload: season_id/tournament_id/game_number',
-  game.season_id === 'season-1' && game.tournament_id === 'tour-1' && game.game_number === 12);
-check('payload: winner = black', game.winner === 'black');
-check('payload: date = finishedAt', game.date === '2026-06-14T20:30:00.000Z');
-check('payload: first_killed = trackerId места ЛХ (seat 3)', game.first_killed === 'id-3');
-check('payload: best_move_seat_1/2/3', game.best_move_seat_1 === 2 && game.best_move_seat_2 === 7 && game.best_move_seat_3 === null);
-check('payload: 10 игроков', gamePlayers.length === 10);
-check('payload: роль civilian → citizen', gamePlayers[2].role === 'citizen');
-check('payload: дон при победе мафии → win, base 1', gamePlayers[0].result === 'win' && gamePlayers[0].base_score === 1);
-check('payload: мирный при победе мафии → lose, base 0', gamePlayers[2].result === 'lose' && gamePlayers[2].base_score === 0);
-check('payload: player_id = trackerId', gamePlayers[0].player_id === 'id-1');
-check('payload: бонус и комментарий', gamePlayers[2].bonus_score === 0.5 && gamePlayers[2].bonus_comment === 'ЛХ' && gamePlayers[2].total_score === 0.5);
+test('buildGamePayload собирает игру и места для трекера', () => {
+  const roles = ['don', 'mafia', 'civilian', 'sheriff', 'civilian', 'civilian', 'mafia', 'civilian', 'civilian', 'civilian'];
+  const state = {
+    meta: { result: 'mafia_win', finishedAt: '2026-06-14T20:30:00.000Z', title: 'Кубок' },
+    bestMove: { by: 3, picks: [2, 7] },
+    players: roles.map((role, i) => ({
+      seat: i + 1,
+      role,
+      trackerId: `id-${i + 1}`,
+      scoreBase: null,
+      scoreBonus: i === 2 ? 0.5 : 0,
+      comment: i === 2 ? 'ЛХ' : ''
+    }))
+  };
 
-console.log(`\nПРОВАЛОВ: ${fail} из ${pass + fail}`);
-process.exit(fail ? 1 : 0);
+  const { game, gamePlayers } = buildGamePayload(state, 'season-1', 'tour-1', 12);
+
+  assert.equal(game.season_id, 'season-1');
+  assert.equal(game.tournament_id, 'tour-1');
+  assert.equal(game.game_number, 12);
+  assert.equal(game.winner, 'black');
+  assert.equal(game.date, '2026-06-14T20:30:00.000Z');
+  assert.equal(game.first_killed, 'id-3', 'ЛХ оставил игрок с места 3');
+  assert.equal(game.best_move_seat_1, 2);
+  assert.equal(game.best_move_seat_2, 7);
+  assert.equal(game.best_move_seat_3, null);
+
+  assert.equal(gamePlayers.length, 10);
+  assert.equal(gamePlayers[0].player_id, 'id-1');
+  assert.equal(gamePlayers[2].role, 'citizen');
+  assert.equal(gamePlayers[0].result, 'win');
+  assert.equal(gamePlayers[0].base_score, 1);
+  assert.equal(gamePlayers[2].result, 'lose');
+  assert.equal(gamePlayers[2].base_score, 0);
+  assert.equal(gamePlayers[2].bonus_score, 0.5);
+  assert.equal(gamePlayers[2].bonus_comment, 'ЛХ');
+  assert.equal(gamePlayers[2].total_score, 0.5);
+});

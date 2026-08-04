@@ -6,9 +6,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-export const DATA_DIR = path.join(ROOT, 'data');
+// Каталоги переопределяются переменными окружения: тесты поднимают сервер в своей
+// песочнице и не трогают боевые data/ и uploads/ ведущего.
+export const DATA_DIR = path.resolve(process.env.MAFIA_DATA_DIR || path.join(ROOT, 'data'));
 export const GAMES_DIR = path.join(DATA_DIR, 'games');
-export const UPLOADS_DIR = path.join(ROOT, 'uploads');
+export const UPLOADS_DIR = path.resolve(process.env.MAFIA_UPLOADS_DIR || path.join(ROOT, 'uploads'));
 const AUTOSAVE_FILE = path.join(DATA_DIR, 'autosave.json');
 const ROSTER_FILE = path.join(DATA_DIR, 'players.json');
 

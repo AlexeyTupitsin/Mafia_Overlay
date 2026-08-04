@@ -10,18 +10,38 @@ import { displayBase, totalScore } from '../public/shared/constants.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
+const CONFIG_FILE = path.join(ROOT, 'config.json');
+const DISABLED = Object.freeze({ enabled: false, supabaseUrl: '', serviceRoleKey: '' });
+
+// Конфиг кэшируется: getConfig() зовётся из isEnabled() и из каждого хопа к
+// PostgREST — на одну отправку игры это был десяток синхронных чтений диска.
+// Сверяем mtime, чтобы правка config.json подхватывалась без рестарта сервера.
+let cached = null;
+let cachedMtimeMs = -1;
+
 export function getConfig() {
+  let mtimeMs;
   try {
-    const cfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf8'));
-    const t = cfg.tracker || {};
-    return {
+    mtimeMs = fs.statSync(CONFIG_FILE).mtimeMs;
+  } catch {
+    cached = DISABLED;
+    cachedMtimeMs = -1;
+    return cached;
+  }
+  if (cached && mtimeMs === cachedMtimeMs) return cached;
+
+  try {
+    const t = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')).tracker || {};
+    cached = Object.freeze({
       enabled: Boolean(t.enabled),
       supabaseUrl: String(t.supabaseUrl || '').replace(/\/+$/, ''), // без хвостовых слешей
       serviceRoleKey: String(t.serviceRoleKey || '')
-    };
+    });
   } catch {
-    return { enabled: false, supabaseUrl: '', serviceRoleKey: '' };
+    cached = DISABLED; // битый JSON — работаем как без интеграции
   }
+  cachedMtimeMs = mtimeMs;
+  return cached;
 }
 
 export function isEnabled() {
@@ -143,8 +163,17 @@ export async function getMaxGameNumber(seasonId) {
   return rows[0] ? rows[0].game_number : 0;
 }
 
+// PostgREST разбирает запятую в значении фильтра как разделитель условий, а
+// точку — как начало оператора. Значения со спецсимволами обязаны быть в
+// двойных кавычках: без этого турнир «Кубок клуба, этап 2» не находился и
+// каждый раз создавался заново (либо запрос падал с 400).
+export function buildEqFilter(value) {
+  const quoted = `"${String(value).replace(/["\\]/g, '\\$&')}"`;
+  return `eq.${encodeURIComponent(quoted)}`;
+}
+
 export async function findTournament(seasonId, name, date) {
-  const q = `tournaments?season_id=eq.${seasonId}&name=eq.${encodeURIComponent(name)}&date=eq.${date}&select=id`;
+  const q = `tournaments?season_id=eq.${seasonId}&name=${buildEqFilter(name)}&date=eq.${date}&select=id`;
   const rows = await rest(q);
   return rows[0] ? rows[0].id : null;
 }
