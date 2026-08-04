@@ -6,6 +6,10 @@ import { handlers, labelFor, NOT_UNDOABLE, NOT_LOGGED, ValidationError } from '.
 import * as undo from './undo.js';
 import * as persistence from './persistence.js';
 
+// После этих действий обновляем файл игры в архиве: завершение, ввод баллов
+// (они проставляются уже после finish) и отметка об отправке в трекер.
+const ARCHIVE_AFTER = new Set(['FINISH_GAME', 'SET_SCORE', 'SET_TRACKER_GAME_ID']);
+
 let state = null;
 let rev = 0;
 let defaults = {};
@@ -120,8 +124,14 @@ export function applyAction(action) {
   const ctx = { createInitialState };
   const replaced = handler(next, payload, ctx);
 
+  // Клонировать здесь нечего: next — уже глубокая копия, а прежний объект
+  // state после присваивания ниже никем не мутируется (обработчики пишут
+  // только в next). Инвариант, на котором это держится: getState() отдаётся
+  // наружу исключительно на чтение — routes.js (buildGamePayload) и
+  // index.js (сериализация). Появится код, мутирующий результат getState(),
+  // — снапшоты undo испортятся, и клон придётся вернуть.
   if (!NOT_UNDOABLE.has(action.type)) {
-    undo.push({ state: structuredClone(state), logIndex: state.log.length, label });
+    undo.push({ state, logIndex: state.log.length, label });
   }
 
   if (action.type === 'NEW_GAME' && state.meta.status !== 'setup') {
@@ -134,16 +144,8 @@ export function applyAction(action) {
     state.log.push(logEntry(action.type, payload, label));
   }
 
-  if (action.type === 'FINISH_GAME') {
+  if (ARCHIVE_AFTER.has(action.type)) {
     persistence.archiveGame(state);
-  }
-
-  if (action.type === 'SET_SCORE') {
-    persistence.archiveGame(state); // баллы вводятся после finish — обновляем архив
-  }
-
-  if (action.type === 'SET_TRACKER_GAME_ID') {
-    persistence.archiveGame(state); // отметка отправки — обновляем архив
   }
 
   emit();

@@ -1,47 +1,74 @@
-// Проверка восстановления из autosave + страниц + загрузки фото
-import WebSocket from 'ws';
+// Восстановление состояния после перезапуска сервера, отдача страниц и
+// загрузка фото с ресайзом. Тест сам гасит и поднимает сервер на той же
+// песочнице данных.
+
+import { test, before, after } from 'node:test';
+import assert from 'node:assert/strict';
 import sharp from 'sharp';
+import { startServer } from './helpers/server.mjs';
+import { connect, startGame } from './helpers/client.mjs';
 
-const expectedGameId = process.argv[2];
-let failures = 0;
-const check = (name, cond) => {
-  console.log(`  ${cond ? 'ok' : 'FAIL'}: ${name}`);
-  if (!cond) failures++;
-};
+let server;
+let gameId;
 
-// 1) состояние восстановлено из autosave.json
-const stateMsg = await new Promise((resolve, reject) => {
-  const ws = new WebSocket('ws://localhost:3000/ws');
-  ws.once('message', (d) => { resolve(JSON.parse(d.toString())); ws.close(); });
-  ws.once('error', reject);
+before(async () => {
+  server = await startServer();
+  const c = await connect(server);
+  await startGame(c, { title: 'Рестарт', gameNumber: 1, nicknames: true });
+  await c.act('SET_SPEAKER', { seat: 1 });
+  await c.act('ADD_FOUL', { seat: 2 });
+  await c.act('NEXT_PHASE');
+  await c.act('SET_SHOT', { seat: 4 });
+  await c.act('FINISH_GAME', { result: 'city_win' });
+  gameId = c.state.gameId;
+  c.close();
+
+  // Гасим и поднимаем заново на том же каталоге данных.
+  await server.stop();
+  server = await startServer({ dataDir: server.dataDir });
 });
-check('состояние восстановлено после рестарта',
-  stateMsg.state.gameId === expectedGameId && stateMsg.state.meta.status === 'finished');
-check('лог сохранён', stateMsg.state.log.length > 10);
 
-// 2) страницы открываются
-const control = await fetch('http://localhost:3000/control/');
-check('/control отвечает 200', control.ok);
-const overlay = await fetch('http://localhost:3000/overlay/');
-check('/overlay отвечает 200', overlay.ok);
-const css = await (await fetch('http://localhost:3000/overlay/overlay.css')).text();
-check('у body оверлея прозрачный фон', /body\s*{[^}]*background:\s*transparent/s.test(css));
+after(async () => {
+  await server.stop();
+  server.cleanup();
+});
 
-// 3) загрузка фото: генерируем PNG 1200×800 и шлём multipart
-const png = await sharp({
-  create: { width: 1200, height: 800, channels: 4, background: { r: 200, g: 60, b: 60, alpha: 1 } }
-}).png().toBuffer();
-const fd = new FormData();
-fd.append('photo', new Blob([png], { type: 'image/png' }), 'test.png');
-const up = await fetch('http://localhost:3000/api/upload', { method: 'POST', body: fd });
-const upJson = await up.json();
-check('upload отвечает url', up.ok && upJson.url && upJson.url.startsWith('/uploads/'));
-if (up.ok) {
-  const img = await fetch(`http://localhost:3000${upJson.url}`);
-  const buf = Buffer.from(await img.arrayBuffer());
-  const meta = await sharp(buf).metadata();
-  check('ресайз до 600 px по большей стороне', img.ok && meta.width === 600 && meta.height === 400);
-}
+test('состояние восстановлено из autosave', async () => {
+  const c = await connect(server);
+  assert.equal(c.state.gameId, gameId);
+  assert.equal(c.state.meta.status, 'finished');
+  assert.ok(c.state.log.length > 10, `в логе ${c.state.log.length} записей`);
+  c.close();
+});
 
-console.log(failures === 0 ? '\nВСЕ ПРОВЕРКИ ПРОЙДЕНЫ' : `\nПРОВАЛОВ: ${failures}`);
-process.exit(failures === 0 ? 0 : 1);
+test('страницы панели и оверлея отдаются', async () => {
+  const control = await fetch(`${server.baseUrl}/control/`);
+  assert.ok(control.ok);
+
+  const overlay = await fetch(`${server.baseUrl}/overlay/`);
+  assert.ok(overlay.ok);
+});
+
+test('у оверлея прозрачный фон — иначе перекроет видео в OBS', async () => {
+  const css = await (await fetch(`${server.baseUrl}/overlay/overlay.css`)).text();
+  assert.match(css, /body\s*{[^}]*background:\s*transparent/s);
+});
+
+test('загруженное фото ужимается до 600 px по большей стороне', async () => {
+  const png = await sharp({
+    create: { width: 1200, height: 800, channels: 4, background: { r: 200, g: 60, b: 60, alpha: 1 } }
+  }).png().toBuffer();
+
+  const fd = new FormData();
+  fd.append('photo', new Blob([png], { type: 'image/png' }), 'test.png');
+  const up = await fetch(`${server.baseUrl}/api/upload`, { method: 'POST', body: fd });
+  const { url } = await up.json();
+  assert.ok(up.ok);
+  assert.ok(url.startsWith('/uploads/'), `неожиданный путь: ${url}`);
+
+  const img = await fetch(`${server.baseUrl}${url}`);
+  assert.ok(img.ok);
+  const meta = await sharp(Buffer.from(await img.arrayBuffer())).metadata();
+  assert.equal(meta.width, 600);
+  assert.equal(meta.height, 400);
+});

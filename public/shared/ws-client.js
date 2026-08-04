@@ -1,9 +1,9 @@
 // Подключение к серверу + автореконнект (экспоненциальный, 0.5–5 с).
 // Использование:
-//   const ws = connectWS({ role, onState, onStatus, onError });
+//   const ws = connectWS({ role, onState, onStatus, onError, onClients });
 //   ws.send({ type: 'ADD_FOUL', payload: { seat: 5 } });
 
-export function connectWS({ role = 'control', onState, onStatus, onError }) {
+export function connectWS({ role = 'control', onState, onStatus, onError, onClients }) {
   let socket = null;
   let attempts = 0;
   let lastRev = -1;
@@ -29,6 +29,9 @@ export function connectWS({ role = 'control', onState, onStatus, onError }) {
         if (msg.rev < lastRev) return; // отбрасываем устаревшие сообщения
         lastRev = msg.rev;
         onState(msg.state, msg);
+      } else if (msg.type === 'clients') {
+        // приходит на подключение/отключение вместо полного состояния
+        if (onClients) onClients(msg.clients);
       } else if (msg.type === 'error' && onError) {
         onError(msg.message);
       }

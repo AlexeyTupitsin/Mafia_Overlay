@@ -6,9 +6,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-export const DATA_DIR = path.join(ROOT, 'data');
+// Каталоги переопределяются переменными окружения: тесты поднимают сервер в своей
+// песочнице и не трогают боевые data/ и uploads/ ведущего.
+export const DATA_DIR = path.resolve(process.env.MAFIA_DATA_DIR || path.join(ROOT, 'data'));
 export const GAMES_DIR = path.join(DATA_DIR, 'games');
-export const UPLOADS_DIR = path.join(ROOT, 'uploads');
+export const UPLOADS_DIR = path.resolve(process.env.MAFIA_UPLOADS_DIR || path.join(ROOT, 'uploads'));
 const AUTOSAVE_FILE = path.join(DATA_DIR, 'autosave.json');
 const ROSTER_FILE = path.join(DATA_DIR, 'players.json');
 
@@ -63,6 +65,7 @@ export function flush() {
     saveTimer = null;
   }
   saveNow(pendingState);
+  flushArchives();
 }
 
 // Восстановление при старте: поднимаем autosave, в том числе завершённую игру
@@ -77,15 +80,40 @@ export function loadAutosave() {
 
 // --- архив игр -------------------------------------------------------------
 
+// Архив пишется с тем же debounce, что и автосейв: при заполнении баллов
+// каждый SET_SCORE вызывал полную перезапись файла с отступами — десяток
+// синхронных записей подряд. Копим по gameId, последнее состояние побеждает.
+let archiveTimer = null;
+const pendingArchives = new Map();
+
 export function archiveGame(state) {
-  try {
-    atomicWrite(path.join(GAMES_DIR, `${state.gameId}.json`), JSON.stringify(state, null, 2));
-  } catch (err) {
-    console.error('[persistence] Ошибка записи архива:', err.message);
+  pendingArchives.set(state.gameId, state);
+  if (archiveTimer) return;
+  archiveTimer = setTimeout(() => {
+    archiveTimer = null;
+    flushArchives();
+  }, SAVE_DEBOUNCE_MS);
+}
+
+// Досрочная запись. Зовётся при чтении архива и на остановке процесса —
+// иначе только что завершённая игра не успела бы попасть в список.
+export function flushArchives() {
+  if (archiveTimer) {
+    clearTimeout(archiveTimer);
+    archiveTimer = null;
   }
+  for (const [gameId, state] of pendingArchives) {
+    try {
+      atomicWrite(path.join(GAMES_DIR, `${gameId}.json`), JSON.stringify(state, null, 2));
+    } catch (err) {
+      console.error('[persistence] Ошибка записи архива:', err.message);
+    }
+  }
+  pendingArchives.clear();
 }
 
 export function listGames() {
+  flushArchives();
   let files = [];
   try {
     files = fs.readdirSync(GAMES_DIR).filter((f) => f.endsWith('.json'));
@@ -112,6 +140,7 @@ export function listGames() {
 
 export function getGame(id) {
   if (!/^[0-9a-f-]{36}$/i.test(String(id))) return null;
+  flushArchives();
   return readJson(path.join(GAMES_DIR, `${id}.json`));
 }
 

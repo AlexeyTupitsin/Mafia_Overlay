@@ -1,73 +1,63 @@
-// Проверка баллов и протокола. Запуск при работающем сервере: node test-scores.mjs
-import WebSocket from 'ws';
+// Баллы игроков, заметки ведущего и печатный протокол.
 
-const ws = new WebSocket('ws://localhost:3000/ws?role=control');
-let state = null;
-let lastError = null;
-let failures = 0;
+import { test, before, after } from 'node:test';
+import assert from 'node:assert/strict';
+import { startServer } from './helpers/server.mjs';
+import { connect, startGame } from './helpers/client.mjs';
 
-const waitMsg = () => new Promise((resolve) => ws.once('message', (d) => {
-  const msg = JSON.parse(d.toString());
-  if (msg.type === 'state') state = msg.state;
-  if (msg.type === 'error') lastError = msg.message;
-  resolve(msg);
-}));
+let server;
+let c;
 
-async function act(type, payload) {
-  lastError = null;
-  ws.send(JSON.stringify({ type: 'action', action: { type, payload } }));
-  let msg;
-  do { msg = await waitMsg(); } while (msg.type !== 'state' && msg.type !== 'error');
-  return msg;
-}
-
-function check(name, cond) {
-  if (cond) console.log(`  ok: ${name}`);
-  else { failures++; console.log(`  FAIL: ${name}${lastError ? ` (server: ${lastError})` : ''}`); }
-}
-
-ws.on('open', async () => {
-  await waitMsg();
-
-  await act('NEW_GAME', { title: 'Баллы', gameNumber: 7, carryPlayers: false });
-  for (let s = 1; s <= 6; s++) await act('SET_ROLE', { seat: s, role: 'civilian' });
-  await act('SET_ROLE', { seat: 7, role: 'mafia' });
-  await act('SET_ROLE', { seat: 8, role: 'mafia' });
-  await act('SET_ROLE', { seat: 9, role: 'don' });
-  await act('SET_ROLE', { seat: 10, role: 'sheriff' });
-  await act('START_GAME');
-
-  await act('SET_SCORE', { seat: 1, bonus: 0.5 });
-  check('баллы до finish отклонены', lastError !== null);
-
-  // заметка по ходу игры пишет то же поле comment и доступна до завершения
-  await act('SET_COMMENT', { seat: 1, comment: 'тихий в первом круге' });
-  check('заметка по ходу игры сохранена', lastError === null && state.players[0].comment === 'тихий в первом круге');
-
-  await act('FINISH_GAME', { result: 'mafia_win' });
-  check('заметка видна в сетке подсчёта после finish', state.players[0].comment === 'тихий в первом круге');
-
-  check('игра завершена', state.meta.status === 'finished' && state.meta.result === 'mafia_win');
-
-  await act('SET_SCORE', { seat: 7, bonus: 0.3 });
-  await act('SET_SCORE', { seat: 1, comment: 'хорошая логика' });
-  await act('SET_SCORE', { seat: 1, base: 1, bonus: -0.2 });
-  check('бонус дробный сохранён', state.players[6].scoreBonus === 0.3);
-  check('комментарий сохранён', state.players[0].comment === 'хорошая логика');
-  check('ручной базовый сохранён', state.players[0].scoreBase === 1 && state.players[0].scoreBonus === -0.2);
-
-  await act('SET_SCORE', { seat: 1, base: null });
-  check('сброс базового к авто', state.players[0].scoreBase === null);
-
-  const proto = await fetch(`http://localhost:3000/api/games/${state.gameId}/protocol`);
-  const html = await proto.text();
-  check('протокол отдаётся', proto.ok);
-  check('есть секция «Итоговые баллы»', html.includes('Итоговые баллы'));
-  check('нет секции «Полный лог»', !html.includes('Полный лог'));
-  check('комментарий в протоколе', html.includes('хорошая логика'));
-
-  console.log(failures === 0 ? '\nВСЕ ПРОВЕРКИ ПРОЙДЕНЫ' : `\nПРОВАЛОВ: ${failures}`);
-  process.exit(failures === 0 ? 0 : 1);
+before(async () => {
+  server = await startServer();
+  c = await connect(server);
+  await startGame(c, { title: 'Баллы', gameNumber: 7 });
 });
 
-setTimeout(() => { console.log('Таймаут теста'); process.exit(2); }, 30000);
+after(async () => {
+  c.close();
+  await server.stop();
+  server.cleanup();
+});
+
+test('баллы до завершения игры отклоняются', async () => {
+  await c.act('SET_SCORE', { seat: 1, bonus: 0.5 });
+  assert.ok(c.lastError, 'ожидалась ошибка — игра ещё идёт');
+});
+
+test('заметка по ходу игры сохраняется и переживает завершение', async () => {
+  await c.act('SET_COMMENT', { seat: 1, comment: 'тихий в первом круге' });
+  assert.equal(c.lastError, null);
+  assert.equal(c.state.players[0].comment, 'тихий в первом круге');
+
+  await c.act('FINISH_GAME', { result: 'mafia_win' });
+  assert.equal(c.state.meta.status, 'finished');
+  assert.equal(c.state.meta.result, 'mafia_win');
+  assert.equal(c.state.players[0].comment, 'тихий в первом круге');
+});
+
+test('дробный бонус, комментарий и ручной базовый балл', async () => {
+  await c.act('SET_SCORE', { seat: 7, bonus: 0.3 });
+  await c.act('SET_SCORE', { seat: 1, comment: 'хорошая логика' });
+  await c.act('SET_SCORE', { seat: 1, base: 1, bonus: -0.2 });
+
+  assert.equal(c.state.players[6].scoreBonus, 0.3);
+  assert.equal(c.state.players[0].comment, 'хорошая логика');
+  assert.equal(c.state.players[0].scoreBase, 1);
+  assert.equal(c.state.players[0].scoreBonus, -0.2);
+});
+
+test('базовый балл сбрасывается к автоматическому', async () => {
+  await c.act('SET_SCORE', { seat: 1, base: null });
+  assert.equal(c.state.players[0].scoreBase, null);
+});
+
+test('протокол содержит баллы и комментарии, но не полный лог', async () => {
+  const res = await fetch(`${server.baseUrl}/api/games/${c.state.gameId}/protocol`);
+  assert.ok(res.ok);
+
+  const html = await res.text();
+  assert.match(html, /Итоговые баллы/);
+  assert.match(html, /хорошая логика/);
+  assert.doesNotMatch(html, /Полный лог/);
+});

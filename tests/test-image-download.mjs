@@ -1,61 +1,55 @@
-// Юнит-тест локального сохранения и скачивания аватаров.
-// Сеть мокается; sharp работает по-настоящему на крошечном сгенерированном PNG.
+// Локальное сохранение и скачивание аватаров. Сеть мокается; sharp работает
+// по-настоящему на крошечном сгенерированном PNG.
+// Каталоги подменяются ДО импорта persistence — иначе тест писал бы в боевой uploads/.
 
+import { test, after } from 'node:test';
+import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import sharp from 'sharp';
-import * as persistence from '../server/persistence.js';
-import { saveImageBuffer, downloadAndSaveAvatar } from '../server/images.js';
 
-let pass = 0;
-let fail = 0;
-function check(name, cond) {
-  if (cond) { pass += 1; console.log('  ok:', name); }
-  else { fail += 1; console.log('  FAIL:', name); }
-}
+const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'mafia-img-'));
+process.env.MAFIA_DATA_DIR = path.join(sandbox, 'data');
+process.env.MAFIA_UPLOADS_DIR = path.join(sandbox, 'uploads');
+
+const persistence = await import('../server/persistence.js');
+const { saveImageBuffer, downloadAndSaveAvatar } = await import('../server/images.js');
 
 persistence.ensureDirs();
-const created = [];
-function abs(url) { return path.join(persistence.UPLOADS_DIR, path.basename(url)); }
 
-// крошечный реальный PNG-буфер
 const pngBuf = await sharp({ create: { width: 8, height: 8, channels: 3, background: { r: 10, g: 20, b: 30 } } })
   .png().toBuffer();
 
-// saveImageBuffer: png остаётся png, путь /uploads/, файл существует
-{
+const onDisk = (url) => path.join(persistence.UPLOADS_DIR, path.basename(url));
+
+after(() => {
+  fs.rmSync(sandbox, { recursive: true, force: true });
+});
+
+test('saveImageBuffer сохраняет PNG как PNG и отдаёт путь /uploads/', async () => {
   const url = await saveImageBuffer(pngBuf);
-  created.push(url);
-  check('saveImageBuffer возвращает /uploads/*.png', /^\/uploads\/[\w-]+\.png$/.test(url));
-  check('saveImageBuffer создаёт файл на диске', fs.existsSync(abs(url)));
-}
+  assert.match(url, /^\/uploads\/[\w-]+\.png$/);
+  assert.ok(fs.existsSync(onDisk(url)), 'файл не создан на диске');
+});
 
-const origFetch = global.fetch;
+test('downloadAndSaveAvatar кладёт скачанный аватар локально', async (t) => {
+  const orig = global.fetch;
+  global.fetch = async () => ({ ok: true, arrayBuffer: async () => pngBuf });
+  t.after(() => { global.fetch = orig; });
 
-// downloadAndSaveAvatar: успешная загрузка → локальный путь + файл
-global.fetch = async () => ({ ok: true, arrayBuffer: async () => pngBuf });
-try {
   const url = await downloadAndSaveAvatar('https://x.supabase.co/avatars/a.png');
-  created.push(url);
-  check('downloadAndSaveAvatar возвращает локальный путь', url.startsWith('/uploads/'));
-  check('downloadAndSaveAvatar создаёт файл', fs.existsSync(abs(url)));
-} finally {
-  global.fetch = origFetch;
-}
+  assert.ok(url.startsWith('/uploads/'));
+  assert.ok(fs.existsSync(onDisk(url)));
+});
 
-// downloadAndSaveAvatar: не-2xx → исключение (роут поймает и пропустит фото)
-global.fetch = async () => ({ ok: false, status: 404, arrayBuffer: async () => Buffer.alloc(0) });
-try {
-  await downloadAndSaveAvatar('https://x.supabase.co/avatars/missing.png');
-  check('ошибка скачивания пробрасывается', false);
-} catch {
-  check('ошибка скачивания пробрасывается', true);
-} finally {
-  global.fetch = origFetch;
-}
+test('не-2xx пробрасывается наружу — роут решит, пропускать ли фото', async (t) => {
+  const orig = global.fetch;
+  global.fetch = async () => ({ ok: false, status: 404, arrayBuffer: async () => Buffer.alloc(0) });
+  t.after(() => { global.fetch = orig; });
 
-// уборка за собой
-for (const url of created) { try { fs.unlinkSync(abs(url)); } catch { /* ignore */ } }
-
-console.log(`\nПРОВАЛОВ: ${fail} из ${pass + fail}`);
-process.exit(fail ? 1 : 0);
+  await assert.rejects(
+    () => downloadAndSaveAvatar('https://x.supabase.co/avatars/missing.png'),
+    /404/
+  );
+});

@@ -9,8 +9,8 @@
   },
   "scripts": {
     "start": "node server/index.js",
-    "lint": "eslint server public",
-    "test": "node tests/test-scenario.mjs"
+    "lint": "eslint server public tests tools",
+    "test": "node --test --test-concurrency=1 \"tests/test-*.mjs\""
   },
   "dependencies": {
     "express": "^4.21.2",

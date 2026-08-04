@@ -2,6 +2,7 @@
 // При обрыве связи — тихий реконнект, в кадре остаётся последнее состояние.
 
 import { connectWS } from '/shared/ws-client.js';
+import { escapeHtml } from '/shared/constants.js';
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -205,10 +206,6 @@ function renderTitle() {
 }
 
 // --- общий рендер -------------------------------------------------------------------
-
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-}
 
 function render() {
   $('#plates').classList.toggle('hidden', !state.overlay.plates);

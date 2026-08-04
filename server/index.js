@@ -10,13 +10,17 @@ import { WebSocketServer, WebSocket } from 'ws';
 import * as store from './store.js';
 import * as persistence from './persistence.js';
 import { createRouter } from './routes.js';
+import { createAuth } from './auth.js';
 import { ValidationError } from './actions.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
+// Путь к конфигу переопределяется MAFIA_CONFIG — тесты подкладывают свой.
+const CONFIG_FILE = process.env.MAFIA_CONFIG || path.join(ROOT, 'config.json');
+
 let config = {};
 try {
-  config = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf8'));
+  config = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
 } catch {
   console.warn('[server] config.json не прочитан, используются настройки по умолчанию');
 }
@@ -29,17 +33,34 @@ persistence.cleanupUploads(); // подчищаем фото-сироты до �
 const app = express();
 app.use(express.json({ limit: '1mb' }));
 
-app.use('/control', express.static(path.join(ROOT, 'public', 'control')));
+const auth = createAuth((config.auth || {}).token);
+
+// Оверлей, общие модули и фото остаются открытыми: Browser Source в OBS не
+// умеет логиниться. Управлять игрой через них нельзя — WS с role=overlay
+// работает только на чтение.
+app.use('/control', auth.guard, express.static(path.join(ROOT, 'public', 'control')));
 app.use('/overlay', express.static(path.join(ROOT, 'public', 'overlay')));
 app.use('/shared', express.static(path.join(ROOT, 'public', 'shared')));
-app.use('/uploads', express.static(persistence.UPLOADS_DIR, { maxAge: '7d' }));
-app.use('/api', createRouter());
+// Имена файлов — UUID, содержимое неизменяемо: перепроверять нечего.
+// immutable снимает условные запросы из OBS при каждом показе плашки.
+app.use('/uploads', express.static(persistence.UPLOADS_DIR, { maxAge: '365d', immutable: true }));
+app.use('/api', auth.guard, createRouter());
 // диагностика старых браузеров (ES5-страница, проверяет фичи и связь по WS)
 app.get('/diag', (req, res) => res.sendFile(path.join(ROOT, 'public', 'diag.html')));
 app.get('/', (req, res) => res.redirect('/control'));
 
 const server = http.createServer(app);
-const wss = new WebSocketServer({ server, path: '/ws' });
+const wss = new WebSocketServer({
+  server,
+  path: '/ws',
+  // Панель обязана предъявить токен уже на upgrade. Оверлей пускаем без него
+  // (OBS не логинится), но его соединение только читает.
+  verifyClient({ req }, done) {
+    const url = new URL(req.url, 'http://localhost');
+    if (url.searchParams.get('role') === 'overlay') return done(true);
+    done(auth.authorized(req));
+  }
+});
 
 // роль клиента берём из query (?role=overlay|control) — для индикатора на панели
 function clientCounts() {
@@ -53,19 +74,39 @@ function clientCounts() {
   return { control, overlay };
 }
 
-function stateMessage() {
-  return JSON.stringify({
-    type: 'state',
-    state: store.getState(),
-    rev: store.getRev(),
-    undoDepth: store.getUndoDepth(),
-    clients: clientCounts(),
-    serverNow: Date.now() // для коррекции расхождения часов клиента (таймер)
-  });
+// Две версии сообщения на одну рассылку. Оверлею протокол не нужен, а log
+// растёт всю партию: без урезания каждое нажатие фола под конец игры гнало в
+// OBS сотни записей — O(n²) по числу действий за игру.
+function stateMessages() {
+  const state = store.getState();
+  const rev = store.getRev();
+  const clients = clientCounts();
+  const serverNow = Date.now(); // для коррекции расхождения часов клиента (таймер)
+  return {
+    control: JSON.stringify({
+      type: 'state', state, rev, undoDepth: store.getUndoDepth(), clients, serverNow
+    }),
+    overlay: JSON.stringify({
+      type: 'state', state: { ...state, log: [] }, rev, clients, serverNow
+    })
+  };
+}
+
+function messageFor(ws, msgs) {
+  return ws.clientRole === 'overlay' ? msgs.overlay : msgs.control;
 }
 
 function broadcast() {
-  const msg = stateMessage();
+  const msgs = stateMessages();
+  for (const ws of wss.clients) {
+    if (ws.readyState === WebSocket.OPEN) ws.send(messageFor(ws, msgs));
+  }
+}
+
+// Подключение и отключение меняют только счётчик клиентов — гонять ради этого
+// полное состояние незачем.
+function broadcastClients() {
+  const msg = JSON.stringify({ type: 'clients', clients: clientCounts() });
   for (const ws of wss.clients) {
     if (ws.readyState === WebSocket.OPEN) ws.send(msg);
   }
@@ -75,8 +116,14 @@ wss.on('connection', (ws, req) => {
   const url = new URL(req.url, 'http://localhost');
   ws.clientRole = url.searchParams.get('role') === 'overlay' ? 'overlay' : 'control';
 
-  ws.send(stateMessage());
-  broadcast(); // обновляем счётчики клиентов у всех
+  // Heartbeat: браузерный источник OBS, потерявший сеть без TCP FIN (обычный
+  // обрыв Wi-Fi), иначе остаётся в wss.clients как OPEN — ведущий видит
+  // «оверлей: 1», а картинки в кадре нет.
+  ws.isAlive = true;
+  ws.on('pong', () => { ws.isAlive = true; });
+
+  ws.send(messageFor(ws, stateMessages()));
+  broadcastClients();
 
   ws.on('message', (data) => {
     let msg;
@@ -86,6 +133,9 @@ wss.on('connection', (ws, req) => {
       return;
     }
     if (msg.type !== 'action' || !msg.action) return;
+    // Оверлей — только отображение. Без этого любой в сети клуба открыл бы
+    // WS с role=overlay и играл бы за ведущего в прямом эфире.
+    if (ws.clientRole === 'overlay') return;
     try {
       store.applyAction(msg.action);
     } catch (err) {
@@ -98,8 +148,23 @@ wss.on('connection', (ws, req) => {
     }
   });
 
-  ws.on('close', () => broadcast());
+  ws.on('close', () => broadcastClients());
 });
+
+// Кто не ответил на ping за интервал — обрываем; счётчики обновит обработчик
+// close, который terminate() гарантированно вызовет.
+const HEARTBEAT_MS = Number(process.env.MAFIA_HEARTBEAT_MS) || 30000;
+const heartbeat = setInterval(() => {
+  for (const ws of wss.clients) {
+    if (ws.isAlive === false) {
+      ws.terminate();
+      continue;
+    }
+    ws.isAlive = false;
+    ws.ping();
+  }
+}, HEARTBEAT_MS);
+wss.on('close', () => clearInterval(heartbeat));
 
 store.subscribe(() => broadcast());
 
@@ -163,9 +228,11 @@ server.listen(PORT, () => {
   console.log('');
 });
 
-// При остановке — финальный сейв без debounce
+// При остановке — финальный сейв без debounce. Интервал heartbeat гасим здесь
+// же: иначе он держит event loop и процесс не завершится.
 for (const sig of ['SIGINT', 'SIGTERM']) {
   process.on(sig, () => {
+    clearInterval(heartbeat);
     persistence.flush();
     process.exit(0);
   });

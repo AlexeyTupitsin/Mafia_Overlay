@@ -6,7 +6,7 @@ import * as persistence from './persistence.js';
 import * as images from './images.js';
 import * as tracker from './tracker.js';
 import * as store from './store.js';
-import { displayBase, totalScore } from '../public/shared/constants.js';
+import { displayBase, totalScore, escapeHtml as esc } from '../public/shared/constants.js';
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -24,10 +24,6 @@ const RESULT_LABELS = {
 };
 const ROLE_LABELS = { civilian: 'Мирный', mafia: 'Мафия', don: 'Дон', sheriff: 'Шериф' };
 const STATUS_LABELS = { alive: 'В игре', voted_out: 'Заголосован', killed: 'Убит', removed: 'Удалён' };
-
-function esc(s) {
-  return String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-}
 
 export function createRouter() {
   const router = express.Router();
