@@ -37,6 +37,12 @@ const ws = connectWS({
     if (typeof msg.serverNow === 'number') clockOffset = msg.serverNow - Date.now();
     render();
   },
+  // подключение/отключение источника OBS: сервер шлёт только счётчики,
+  // перерисовывать всю панель ради этого не нужно
+  onClients(c) {
+    clients = c || clients;
+    updateConnText();
+  },
   onStatus(online) {
     $('#conn-ind').classList.toggle('online', online);
     if (!online) $('#conn-text').textContent = 'нет связи';
@@ -48,6 +54,10 @@ const ws = connectWS({
 
 function send(type, payload) {
   if (!ws.send({ type, payload })) toast('Нет соединения с сервером');
+}
+
+function updateConnText() {
+  $('#conn-text').textContent = `оверлей: ${clients.overlay}`;
 }
 
 // высота шапки → CSS-переменная, чтобы sticky-баннер ЛХ вставал точно под ней
@@ -971,7 +981,7 @@ function render() {
   $('#btn-timer-30').textContent = String(state.settings.shortSpeechSec);
 
   $('#btn-undo').disabled = undoDepth === 0;
-  $('#conn-text').textContent = `оверлей: ${clients.overlay}`;
+  updateConnText();
 
   if (status === 'setup') {
     updateSetup();

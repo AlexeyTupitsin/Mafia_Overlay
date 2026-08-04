@@ -53,13 +53,24 @@ export async function connect(server, role = 'control') {
     state: null,
     rev: -1,
     lastError: null,
+    lastMessage: null, // сырое сообщение — нужно тестам на состав рассылки
 
     // Ждёт первое состояние после подключения.
     async ready() {
       const msg = await waitFor((m) => m.type === 'state');
       api.state = msg.state;
       api.rev = msg.rev;
+      api.lastMessage = msg;
       return msg;
+    },
+
+    // Ждёт сообщения о числе клиентов, удовлетворяющего условию. Предикат
+    // нужен потому, что закрытие сокета асинхронно: события подключения и
+    // отключения соседних тестов могут прийти в любой момент, и ждать «просто
+    // следующее» сообщение — гонка. Не дождались — таймаут и падение теста.
+    async clientsUntil(match) {
+      const msg = await waitFor((m) => m.type === 'clients' && match(m.clients));
+      return msg.clients;
     },
 
     // Шлёт действие и ждёт либо новое состояние (rev вырос), либо ошибку
@@ -76,6 +87,7 @@ export async function connect(server, role = 'control') {
       } else {
         api.state = msg.state;
         api.rev = msg.rev;
+        api.lastMessage = msg;
       }
       return msg;
     },
@@ -87,6 +99,7 @@ export async function connect(server, role = 'control') {
       const msg = await waitFor((m) => m.type === 'state' && m.rev > revBefore);
       api.state = msg.state;
       api.rev = msg.rev;
+      api.lastMessage = msg;
       return msg;
     },
 

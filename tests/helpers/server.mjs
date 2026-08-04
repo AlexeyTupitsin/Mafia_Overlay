@@ -43,7 +43,7 @@ async function waitReady(baseUrl, child, deadline) {
  * @param {{ dataDir?: string }} opts dataDir передают при рестарте, чтобы
  *   проверить восстановление из autosave той же песочницы.
  */
-export async function startServer({ dataDir } = {}) {
+export async function startServer({ dataDir, heartbeatMs } = {}) {
   const dir = dataDir || fs.mkdtempSync(path.join(os.tmpdir(), 'mafia-test-'));
   const uploadsDir = path.join(dir, 'uploads');
   const port = await freePort();
@@ -55,7 +55,9 @@ export async function startServer({ dataDir } = {}) {
       ...process.env,
       PORT: String(port),
       MAFIA_DATA_DIR: dir,
-      MAFIA_UPLOADS_DIR: uploadsDir
+      MAFIA_UPLOADS_DIR: uploadsDir,
+      // боевой интервал 30 с тест не выдержит — укорачиваем по запросу
+      ...(heartbeatMs ? { MAFIA_HEARTBEAT_MS: String(heartbeatMs) } : {})
     },
     stdio: ['ignore', 'pipe', 'pipe']
   });

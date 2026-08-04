@@ -53,19 +53,39 @@ function clientCounts() {
   return { control, overlay };
 }
 
-function stateMessage() {
-  return JSON.stringify({
-    type: 'state',
-    state: store.getState(),
-    rev: store.getRev(),
-    undoDepth: store.getUndoDepth(),
-    clients: clientCounts(),
-    serverNow: Date.now() // для коррекции расхождения часов клиента (таймер)
-  });
+// Две версии сообщения на одну рассылку. Оверлею протокол не нужен, а log
+// растёт всю партию: без урезания каждое нажатие фола под конец игры гнало в
+// OBS сотни записей — O(n²) по числу действий за игру.
+function stateMessages() {
+  const state = store.getState();
+  const rev = store.getRev();
+  const clients = clientCounts();
+  const serverNow = Date.now(); // для коррекции расхождения часов клиента (таймер)
+  return {
+    control: JSON.stringify({
+      type: 'state', state, rev, undoDepth: store.getUndoDepth(), clients, serverNow
+    }),
+    overlay: JSON.stringify({
+      type: 'state', state: { ...state, log: [] }, rev, clients, serverNow
+    })
+  };
+}
+
+function messageFor(ws, msgs) {
+  return ws.clientRole === 'overlay' ? msgs.overlay : msgs.control;
 }
 
 function broadcast() {
-  const msg = stateMessage();
+  const msgs = stateMessages();
+  for (const ws of wss.clients) {
+    if (ws.readyState === WebSocket.OPEN) ws.send(messageFor(ws, msgs));
+  }
+}
+
+// Подключение и отключение меняют только счётчик клиентов — гонять ради этого
+// полное состояние незачем.
+function broadcastClients() {
+  const msg = JSON.stringify({ type: 'clients', clients: clientCounts() });
   for (const ws of wss.clients) {
     if (ws.readyState === WebSocket.OPEN) ws.send(msg);
   }
@@ -75,8 +95,14 @@ wss.on('connection', (ws, req) => {
   const url = new URL(req.url, 'http://localhost');
   ws.clientRole = url.searchParams.get('role') === 'overlay' ? 'overlay' : 'control';
 
-  ws.send(stateMessage());
-  broadcast(); // обновляем счётчики клиентов у всех
+  // Heartbeat: браузерный источник OBS, потерявший сеть без TCP FIN (обычный
+  // обрыв Wi-Fi), иначе остаётся в wss.clients как OPEN — ведущий видит
+  // «оверлей: 1», а картинки в кадре нет.
+  ws.isAlive = true;
+  ws.on('pong', () => { ws.isAlive = true; });
+
+  ws.send(messageFor(ws, stateMessages()));
+  broadcastClients();
 
   ws.on('message', (data) => {
     let msg;
@@ -98,8 +124,23 @@ wss.on('connection', (ws, req) => {
     }
   });
 
-  ws.on('close', () => broadcast());
+  ws.on('close', () => broadcastClients());
 });
+
+// Кто не ответил на ping за интервал — обрываем; счётчики обновит обработчик
+// close, который terminate() гарантированно вызовет.
+const HEARTBEAT_MS = Number(process.env.MAFIA_HEARTBEAT_MS) || 30000;
+const heartbeat = setInterval(() => {
+  for (const ws of wss.clients) {
+    if (ws.isAlive === false) {
+      ws.terminate();
+      continue;
+    }
+    ws.isAlive = false;
+    ws.ping();
+  }
+}, HEARTBEAT_MS);
+wss.on('close', () => clearInterval(heartbeat));
 
 store.subscribe(() => broadcast());
 
@@ -163,9 +204,11 @@ server.listen(PORT, () => {
   console.log('');
 });
 
-// При остановке — финальный сейв без debounce
+// При остановке — финальный сейв без debounce. Интервал heartbeat гасим здесь
+// же: иначе он держит event loop и процесс не завершится.
 for (const sig of ['SIGINT', 'SIGTERM']) {
   process.on(sig, () => {
+    clearInterval(heartbeat);
     persistence.flush();
     process.exit(0);
   });
