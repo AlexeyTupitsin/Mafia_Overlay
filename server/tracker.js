@@ -10,7 +10,8 @@ import { displayBase, totalScore } from '../public/shared/constants.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-const CONFIG_FILE = path.join(ROOT, 'config.json');
+// Тот же путь, что у index.js: MAFIA_CONFIG переопределяет его в тестах.
+const CONFIG_FILE = process.env.MAFIA_CONFIG || path.join(ROOT, 'config.json');
 const DISABLED = Object.freeze({ enabled: false, supabaseUrl: '', serviceRoleKey: '' });
 
 // Конфиг кэшируется: getConfig() зовётся из isEnabled() и из каждого хопа к

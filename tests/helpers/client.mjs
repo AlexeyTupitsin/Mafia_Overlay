@@ -6,8 +6,8 @@ import WebSocket from 'ws';
 
 const ACT_TIMEOUT_MS = 10000;
 
-export async function connect(server, role = 'control') {
-  const ws = new WebSocket(server.wsUrl(role));
+export async function connect(server, role = 'control', token) {
+  const ws = new WebSocket(server.wsUrl(role, token));
   const queue = [];
   let notify = null;
 
@@ -101,6 +101,11 @@ export async function connect(server, role = 'control') {
       api.rev = msg.rev;
       api.lastMessage = msg;
       return msg;
+    },
+
+    // Шлёт действие и не ждёт ответа — для проверок, что сервер его игнорирует.
+    fire(type, payload) {
+      ws.send(JSON.stringify({ type: 'action', action: { type, payload } }));
     },
 
     close() {

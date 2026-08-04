@@ -31,7 +31,9 @@ async function waitReady(baseUrl, child, deadline) {
       throw new Error(`сервер завершился с кодом ${child.exitCode}, не успев подняться`);
     }
     try {
-      const res = await fetch(`${baseUrl}/api/roster`);
+      // /overlay открыт всегда: под токеном /api и /control отдали бы 401,
+      // и готовность сервера никогда бы не подтвердилась.
+      const res = await fetch(`${baseUrl}/overlay/`);
       if (res.ok) return;
     } catch { /* ещё не слушает — пробуем снова */ }
     await new Promise((r) => setTimeout(r, 100));
@@ -43,9 +45,16 @@ async function waitReady(baseUrl, child, deadline) {
  * @param {{ dataDir?: string }} opts dataDir передают при рестарте, чтобы
  *   проверить восстановление из autosave той же песочницы.
  */
-export async function startServer({ dataDir, heartbeatMs } = {}) {
+export async function startServer({ dataDir, heartbeatMs, config } = {}) {
   const dir = dataDir || fs.mkdtempSync(path.join(os.tmpdir(), 'mafia-test-'));
   const uploadsDir = path.join(dir, 'uploads');
+
+  // Свой config.json в песочнице: боевой (с ключами трекера) тесты не трогают.
+  let configFile = null;
+  if (config) {
+    configFile = path.join(dir, 'config.json');
+    fs.writeFileSync(configFile, JSON.stringify(config, null, 2));
+  }
   const port = await freePort();
   const baseUrl = `http://127.0.0.1:${port}`;
 
@@ -57,7 +66,8 @@ export async function startServer({ dataDir, heartbeatMs } = {}) {
       MAFIA_DATA_DIR: dir,
       MAFIA_UPLOADS_DIR: uploadsDir,
       // боевой интервал 30 с тест не выдержит — укорачиваем по запросу
-      ...(heartbeatMs ? { MAFIA_HEARTBEAT_MS: String(heartbeatMs) } : {})
+      ...(heartbeatMs ? { MAFIA_HEARTBEAT_MS: String(heartbeatMs) } : {}),
+      ...(configFile ? { MAFIA_CONFIG: configFile } : {})
     },
     stdio: ['ignore', 'pipe', 'pipe']
   });
@@ -80,7 +90,8 @@ export async function startServer({ dataDir, heartbeatMs } = {}) {
     baseUrl,
     dataDir: dir,
     uploadsDir,
-    wsUrl: (role = 'control') => `ws://127.0.0.1:${port}/ws?role=${role}`,
+    wsUrl: (role = 'control', token) =>
+      `ws://127.0.0.1:${port}/ws?role=${role}${token ? `&token=${encodeURIComponent(token)}` : ''}`,
 
     // Останавливает сервер, дождавшись выхода процесса: иначе следующий старт
     // на том же dataDir может застать недописанный autosave.

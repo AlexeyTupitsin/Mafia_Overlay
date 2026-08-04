@@ -6,6 +6,9 @@
     "foulSilenceAt": 3,
     "foulRemoveAt": 4
   },
+  "auth": {
+    "token": ""
+  },
   "tracker": {
     "enabled": false,
     "supabaseUrl": "https://ВАШ-ПРОЕКТ.supabase.co",

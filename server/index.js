@@ -10,13 +10,17 @@ import { WebSocketServer, WebSocket } from 'ws';
 import * as store from './store.js';
 import * as persistence from './persistence.js';
 import { createRouter } from './routes.js';
+import { createAuth } from './auth.js';
 import { ValidationError } from './actions.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
+// Путь к конфигу переопределяется MAFIA_CONFIG — тесты подкладывают свой.
+const CONFIG_FILE = process.env.MAFIA_CONFIG || path.join(ROOT, 'config.json');
+
 let config = {};
 try {
-  config = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf8'));
+  config = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
 } catch {
   console.warn('[server] config.json не прочитан, используются настройки по умолчанию');
 }
@@ -29,19 +33,34 @@ persistence.cleanupUploads(); // подчищаем фото-сироты до �
 const app = express();
 app.use(express.json({ limit: '1mb' }));
 
-app.use('/control', express.static(path.join(ROOT, 'public', 'control')));
+const auth = createAuth((config.auth || {}).token);
+
+// Оверлей, общие модули и фото остаются открытыми: Browser Source в OBS не
+// умеет логиниться. Управлять игрой через них нельзя — WS с role=overlay
+// работает только на чтение.
+app.use('/control', auth.guard, express.static(path.join(ROOT, 'public', 'control')));
 app.use('/overlay', express.static(path.join(ROOT, 'public', 'overlay')));
 app.use('/shared', express.static(path.join(ROOT, 'public', 'shared')));
 // Имена файлов — UUID, содержимое неизменяемо: перепроверять нечего.
 // immutable снимает условные запросы из OBS при каждом показе плашки.
 app.use('/uploads', express.static(persistence.UPLOADS_DIR, { maxAge: '365d', immutable: true }));
-app.use('/api', createRouter());
+app.use('/api', auth.guard, createRouter());
 // диагностика старых браузеров (ES5-страница, проверяет фичи и связь по WS)
 app.get('/diag', (req, res) => res.sendFile(path.join(ROOT, 'public', 'diag.html')));
 app.get('/', (req, res) => res.redirect('/control'));
 
 const server = http.createServer(app);
-const wss = new WebSocketServer({ server, path: '/ws' });
+const wss = new WebSocketServer({
+  server,
+  path: '/ws',
+  // Панель обязана предъявить токен уже на upgrade. Оверлей пускаем без него
+  // (OBS не логинится), но его соединение только читает.
+  verifyClient({ req }, done) {
+    const url = new URL(req.url, 'http://localhost');
+    if (url.searchParams.get('role') === 'overlay') return done(true);
+    done(auth.authorized(req));
+  }
+});
 
 // роль клиента берём из query (?role=overlay|control) — для индикатора на панели
 function clientCounts() {
@@ -114,6 +133,9 @@ wss.on('connection', (ws, req) => {
       return;
     }
     if (msg.type !== 'action' || !msg.action) return;
+    // Оверлей — только отображение. Без этого любой в сети клуба открыл бы
+    // WS с role=overlay и играл бы за ведущего в прямом эфире.
+    if (ws.clientRole === 'overlay') return;
     try {
       store.applyAction(msg.action);
     } catch (err) {
