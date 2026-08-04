@@ -9,14 +9,19 @@ import * as persistence from './persistence.js';
 // Ресайз до 600 px по большей стороне и сохранение в uploads/.
 // PNG остаётся PNG (прозрачность), остальное — JPEG. Возвращает /uploads/<имя>.
 export async function saveImageBuffer(buffer) {
-  const meta = await sharp(buffer).metadata();
-  const isPng = meta.format === 'png';
+  // Один инстанс на всю работу: раньше их было два (для metadata и для
+  // пайплайна), и буфер декодировался дважды.
+  const img = sharp(buffer);
+  const { format } = await img.metadata();
+  const isPng = format === 'png';
   const name = `${randomUUID()}.${isPng ? 'png' : 'jpg'}`;
-  let img = sharp(buffer)
+
+  const pipeline = img
     .rotate()
     .resize(600, 600, { fit: 'inside', withoutEnlargement: true });
-  img = isPng ? img.png() : img.jpeg({ quality: 85 });
-  await img.toFile(path.join(persistence.UPLOADS_DIR, name));
+  await (isPng ? pipeline.png() : pipeline.jpeg({ quality: 85 }))
+    .toFile(path.join(persistence.UPLOADS_DIR, name));
+
   return `/uploads/${name}`;
 }
 

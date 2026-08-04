@@ -32,7 +32,9 @@ app.use(express.json({ limit: '1mb' }));
 app.use('/control', express.static(path.join(ROOT, 'public', 'control')));
 app.use('/overlay', express.static(path.join(ROOT, 'public', 'overlay')));
 app.use('/shared', express.static(path.join(ROOT, 'public', 'shared')));
-app.use('/uploads', express.static(persistence.UPLOADS_DIR, { maxAge: '7d' }));
+// Имена файлов — UUID, содержимое неизменяемо: перепроверять нечего.
+// immutable снимает условные запросы из OBS при каждом показе плашки.
+app.use('/uploads', express.static(persistence.UPLOADS_DIR, { maxAge: '365d', immutable: true }));
 app.use('/api', createRouter());
 // диагностика старых браузеров (ES5-страница, проверяет фичи и связь по WS)
 app.get('/diag', (req, res) => res.sendFile(path.join(ROOT, 'public', 'diag.html')));
