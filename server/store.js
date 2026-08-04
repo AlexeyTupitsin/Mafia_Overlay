@@ -6,6 +6,10 @@ import { handlers, labelFor, NOT_UNDOABLE, NOT_LOGGED, ValidationError } from '.
 import * as undo from './undo.js';
 import * as persistence from './persistence.js';
 
+// После этих действий обновляем файл игры в архиве: завершение, ввод баллов
+// (они проставляются уже после finish) и отметка об отправке в трекер.
+const ARCHIVE_AFTER = new Set(['FINISH_GAME', 'SET_SCORE', 'SET_TRACKER_GAME_ID']);
+
 let state = null;
 let rev = 0;
 let defaults = {};
@@ -140,16 +144,8 @@ export function applyAction(action) {
     state.log.push(logEntry(action.type, payload, label));
   }
 
-  if (action.type === 'FINISH_GAME') {
+  if (ARCHIVE_AFTER.has(action.type)) {
     persistence.archiveGame(state);
-  }
-
-  if (action.type === 'SET_SCORE') {
-    persistence.archiveGame(state); // баллы вводятся после finish — обновляем архив
-  }
-
-  if (action.type === 'SET_TRACKER_GAME_ID') {
-    persistence.archiveGame(state); // отметка отправки — обновляем архив
   }
 
   emit();

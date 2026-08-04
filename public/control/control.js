@@ -1,10 +1,11 @@
 // Панель ведущего: отправляет действия на сервер и рендерит присланный state.
 
 import { connectWS } from '/shared/ws-client.js';
-import { ROLES, STATUSES, RESULTS, OVERLAY_KEYS, displayBase, totalScore } from '/shared/constants.js';
+import {
+  ROLES, STATUSES, RESULTS, OVERLAY_KEYS, displayBase, totalScore, escapeHtml as esc
+} from '/shared/constants.js';
 
 const $ = (sel) => document.querySelector(sel);
-const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 let state = null;
 let undoDepth = 0;
