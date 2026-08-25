@@ -115,15 +115,23 @@ body {
   background: rgba(0, 0, 0, 0.32);
   flex-shrink: 0;
 }
+/* ник ставится одной или двумя строками («|» в нике = точка переноса ведущего),
+   высота полосы при этом не меняется */
 .plate-name .nick {
   flex: 1;
   min-width: 0;
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
   padding: 0 6px;
   font-size: 12px;
   font-weight: 800;
   letter-spacing: 0.02em;
+  line-height: 1.08;
+}
+.plate-name .nick-line {
+  max-width: 100%;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

@@ -2,7 +2,7 @@
 // При обрыве связи — тихий реконнект, в кадре остаётся последнее состояние.
 
 import { connectWS } from '/shared/ws-client.js';
-import { escapeHtml } from '/shared/constants.js';
+import { escapeHtml, splitNickname } from '/shared/constants.js';
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -62,6 +62,16 @@ const plateEls = [];
   }
 })();
 
+// --- ник на плашке -----------------------------------------------------------
+
+// «|» в нике — заданная ведущим точка переноса: ник встаёт в две строки, кегль
+// при этом не меняется (задан в CSS). Слишком длинную строку срезает ellipsis.
+function renderNick(el, nick) {
+  const lines = splitNickname(nick).filter(Boolean);
+  if (!lines.length) lines.push('—');
+  el.innerHTML = lines.map((l) => `<span class="nick-line">${escapeHtml(l)}</span>`).join('');
+}
+
 function renderPlates() {
   // Роли показываются (цвет рамки/плашки + иконка) только при включённой галке «Роли на плашках».
   const showRoles = state.overlay.roles;
@@ -79,7 +89,7 @@ function renderPlates() {
     photo.style.backgroundImage = p.photo ? `url("${p.photo}")` : '';
     photo.querySelector('.placeholder').style.display = p.photo ? 'none' : 'flex';
 
-    el.querySelector('.nick').textContent = p.nickname || '—';
+    renderNick(el.querySelector('.nick'), p.nickname || '');
 
     // верхний левый бокс — иконка роли
     el.querySelector('.plate-role-ico').innerHTML = role && ROLE_ICON[role] ? ROLE_ICON[role] : '';

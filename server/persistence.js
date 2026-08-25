@@ -4,6 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { displayNickname } from '../public/shared/constants.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 // Каталоги переопределяются переменными окружения: тесты поднимают сервер в своей
@@ -204,7 +205,11 @@ export function upsertRosterPlayer({ nickname, photo, trackerId }) {
   const nick = String(nickname || '').trim().slice(0, 40);
   if (!nick) return null;
   const roster = loadRoster();
-  let entry = roster.find((r) => r.nickname.toLowerCase() === nick.toLowerCase());
+  // в справочнике ник хранится вместе с «|» — точка переноса задаётся один раз и
+  // подставляется в следующие игры. Сравнение идёт по виду без разделителя, иначе
+  // «Тёмный|Рыцарь» завёл бы вторую запись рядом с «Тёмный Рыцарь».
+  const key = displayNickname(nick).toLowerCase();
+  let entry = roster.find((r) => displayNickname(r.nickname).toLowerCase() === key);
   if (entry) {
     // undefined-поля не трогаем: ручное сохранение ника не сотрёт фото/привязку
     if (photo !== undefined) entry.photo = photo || null;
@@ -214,7 +219,7 @@ export function upsertRosterPlayer({ nickname, photo, trackerId }) {
     entry = { nickname: nick, photo: photo || null, trackerId: trackerId || null };
     roster.push(entry);
   }
-  roster.sort((a, b) => a.nickname.localeCompare(b.nickname, 'ru'));
+  roster.sort((a, b) => displayNickname(a.nickname).localeCompare(displayNickname(b.nickname), 'ru'));
   try {
     atomicWrite(ROSTER_FILE, JSON.stringify(roster, null, 2));
   } catch (err) {

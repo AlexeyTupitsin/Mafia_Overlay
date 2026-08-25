@@ -2,7 +2,7 @@
 // Каждый обработчик мутирует переданную копию состояния (store клонирует state
 // перед вызовом и коммитит только при успехе). NEW_GAME возвращает новый объект.
 
-import { roundScore } from '../public/shared/constants.js';
+import { roundScore, displayNickname } from '../public/shared/constants.js';
 
 export class ValidationError extends Error {}
 
@@ -50,7 +50,7 @@ function getPlayer(state, seat) {
 
 function playerName(state, seat) {
   const p = state.players[seat - 1];
-  return p && p.nickname ? `№${seat} ${p.nickname}` : `№${seat}`;
+  return p && p.nickname ? `№${seat} ${displayNickname(p.nickname)}` : `№${seat}`;
 }
 
 // Гарантирует наличие записей ночей до указанного круга включительно.
@@ -529,7 +529,7 @@ export function labelFor(action, state) {
   switch (action.type) {
     case 'NEW_GAME': return 'Новая игра';
     case 'SET_META': return 'Изменены данные игры';
-    case 'SET_PLAYER': return `Игрок ${name(p.seat)}: ${p.nickname !== undefined ? `ник «${p.nickname}»` : 'фото'}`;
+    case 'SET_PLAYER': return `Игрок ${name(p.seat)}: ${p.nickname !== undefined ? `ник «${displayNickname(p.nickname)}»` : 'фото'}`;
     case 'SWAP_SEATS': return `Пересадка: места ${p.a} ⇄ ${p.b}`;
     case 'SET_SETTINGS': return 'Изменены настройки';
     case 'SET_ROLE': return `Роль ${name(p.seat)}: ${p.role ? ROLE_LABELS[p.role] : 'снята'}`;

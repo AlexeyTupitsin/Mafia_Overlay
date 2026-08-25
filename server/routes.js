@@ -6,7 +6,7 @@ import * as persistence from './persistence.js';
 import * as images from './images.js';
 import * as tracker from './tracker.js';
 import * as store from './store.js';
-import { displayBase, totalScore, escapeHtml as esc } from '../public/shared/constants.js';
+import { displayBase, totalScore, displayNickname, escapeHtml as esc } from '../public/shared/constants.js';
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -126,7 +126,7 @@ export function createRouter() {
         const seats = incomplete.map((pl) => pl.seat).join(', ');
         return res.status(400).json({ error: `Не у всех игроков заполнены ник и роль (места: ${seats})` });
       }
-      const unlinked = state.players.filter((pl) => !pl.trackerId).map((pl) => pl.nickname);
+      const unlinked = state.players.filter((pl) => !pl.trackerId).map((pl) => displayNickname(pl.nickname));
       if (unlinked.length) {
         return res.status(400).json({
           error: `Не привязаны к трекеру: ${unlinked.join(', ')} — выберите из рейтинга или импортируйте`
@@ -136,14 +136,14 @@ export function createRouter() {
       const ids = state.players.map((pl) => pl.trackerId);
       const dupId = ids.find((id, i) => ids.indexOf(id) !== i);
       if (dupId) {
-        const names = state.players.filter((pl) => pl.trackerId === dupId).map((pl) => pl.nickname);
+        const names = state.players.filter((pl) => pl.trackerId === dupId).map((pl) => displayNickname(pl.nickname));
         return res.status(400).json({ error: `Один игрок выбран на два места: ${names.join(', ')}` });
       }
 
       // защита от игроков, удалённых в трекере после импорта
       const trackerPlayers = await tracker.getPlayers();
       const known = new Set(trackerPlayers.map((pl) => pl.id));
-      const gone = state.players.filter((pl) => !known.has(pl.trackerId)).map((pl) => pl.nickname);
+      const gone = state.players.filter((pl) => !known.has(pl.trackerId)).map((pl) => displayNickname(pl.nickname));
       if (gone.length) {
         return res.status(400).json({ error: `Нет в трекере (удалены?): ${gone.join(', ')}` });
       }
@@ -196,7 +196,7 @@ function renderProtocol(game) {
   const playersRows = game.players.map((p) => `
     <tr>
       <td>${p.seat}</td>
-      <td>${esc(p.nickname) || '—'}</td>
+      <td>${esc(displayNickname(p.nickname)) || '—'}</td>
       <td class="role-${p.role || 'none'}">${ROLE_LABELS[p.role] || '—'}</td>
       <td>${STATUS_LABELS[p.status] || p.status}</td>
       <td>${p.fouls}</td>
@@ -220,7 +220,7 @@ function renderProtocol(game) {
     return `
     <tr>
       <td>${p.seat}</td>
-      <td>${esc(p.nickname) || '—'}</td>
+      <td>${esc(displayNickname(p.nickname)) || '—'}</td>
       <td>${fmtScore(base)}</td>
       <td>${bonus ? (bonus > 0 ? '+' : '') + fmtScore(bonus) : '—'}</td>
       <td><b>${fmtScore(totalScore(p, m.result))}</b></td>

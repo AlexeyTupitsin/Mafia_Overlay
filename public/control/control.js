@@ -2,8 +2,13 @@
 
 import { connectWS } from '/shared/ws-client.js';
 import {
-  ROLES, STATUSES, RESULTS, OVERLAY_KEYS, displayBase, totalScore, escapeHtml as esc
+  ROLES, STATUSES, RESULTS, OVERLAY_KEYS, displayBase, totalScore, displayNickname,
+  escapeHtml as esc
 } from '/shared/constants.js';
+
+// Ник для показа в панели: «|» — точка переноса на плашке оверлея, здесь она
+// лишняя. Сырой ник виден только в поле ввода, где ведущий его и правит.
+const nick = (s) => esc(displayNickname(s));
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -293,7 +298,7 @@ function openBestMoveModal() {
   const picks = new Set(state.bestMove.picks);
   const buttons = state.players
     .filter((p) => p.status === 'alive')
-    .map((p) => `<button class="btn ${picks.has(p.seat) ? 'sel' : ''}" data-bm="${p.seat}">${p.seat}${p.nickname ? `<br><small>${esc(p.nickname)}</small>` : ''}</button>`)
+    .map((p) => `<button class="btn ${picks.has(p.seat) ? 'sel' : ''}" data-bm="${p.seat}">${p.seat}${p.nickname ? `<br><small>${nick(p.nickname)}</small>` : ''}</button>`)
     .join('');
   openModal(`Лучший ход${by ? ` — игрок №${by}` : ''}`, `
     <p class="bp-hint">До 3 номеров подозреваемых. Выбрано: <b id="bm-count">${picks.size}</b></p>
@@ -320,7 +325,7 @@ function openBestMoveModal() {
 
 function openRemoveAtFoulModal(seat) {
   const p = state.players[seat - 1];
-  openModal(`4-й фол — №${seat} ${esc(p.nickname)}`, '<p style="margin:8px 0">Игрок получил лимит фолов и должен быть удалён из игры.</p>', [
+  openModal(`4-й фол — №${seat} ${nick(p.nickname)}`, '<p style="margin:8px 0">Игрок получил лимит фолов и должен быть удалён из игры.</p>', [
     { label: 'Оставить', onClick: closeModal },
     {
       label: 'Удалить игрока', cls: 'btn-danger', onClick: () => {
@@ -445,7 +450,7 @@ function renderPlayersList() {
         <span class="prow-num">${p.seat}</span>
         <div class="prow-photo" style="${p.photo ? `background-image:url('${p.photo}')` : ''}"></div>
         <div class="prow-main">
-          <span class="prow-nick">${esc(p.nickname) || '—'}</span>
+          <span class="prow-nick">${nick(p.nickname) || '—'}</span>
           ${statusText ? `<span class="prow-status ${peek ? 'role' : (out || silence ? 'bad' : '')}">${statusText}</span>` : ''}
         </div>
         <div class="prow-fouls">
@@ -517,7 +522,7 @@ function seatButtons(attr, who, selectedSeat, includeDead = false) {
 
 function nomName(seat) {
   const p = state.players[seat - 1];
-  return `№${seat}${p.nickname ? ` ${esc(p.nickname)}` : ''}`;
+  return `№${seat}${p.nickname ? ` ${nick(p.nickname)}` : ''}`;
 }
 
 function renderBottomPanel() {
@@ -831,7 +836,9 @@ function buildSetup() {
       const nickname = nickEl.value.trim();
       send('SET_PLAYER', { seat, nickname });
       // подстановка фото из справочника
-      const known = roster.find((r) => r.nickname.toLowerCase() === nickname.toLowerCase());
+      // сравнение без разделителя: «Тёмный|Рыцарь» — тот же игрок, что «Тёмный Рыцарь»
+      const key = displayNickname(nickname).toLowerCase();
+      const known = roster.find((r) => displayNickname(r.nickname).toLowerCase() === key);
       if (known && known.photo) send('SET_PLAYER', { seat, photo: known.photo });
       // привязка к трекеру переносится на место; ручная правка ника её не сбросит
       if (known && known.trackerId) send('SET_PLAYER', { seat, trackerId: known.trackerId });
@@ -931,7 +938,7 @@ function renderScoreTable() {
       ${state.players.map((p) => `
         <tr>
           <td>${p.seat}</td>
-          <td class="sc-nick">${esc(p.nickname) || '—'}</td>
+          <td class="sc-nick">${nick(p.nickname) || '—'}</td>
           <td class="role-${p.role || 'none'}">${p.role ? ROLES[p.role].short : '—'}</td>
           <td><input class="sc-base" type="number" step="0.1" data-seat="${p.seat}" value="${fmt(displayBase(p, result))}"></td>
           <td><input class="sc-bonus" type="number" step="0.1" data-seat="${p.seat}" value="${p.scoreBonus || 0}"></td>
