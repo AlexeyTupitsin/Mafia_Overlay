@@ -341,26 +341,23 @@ main { padding: 14px 16px 22px; }
 
 .seat-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-bottom: 9px; }
 .seat-grid .btn { min-height: 46px; font-size: 17px; padding: 4px; }
-.seat-grid .btn.sel { background: var(--accent); border-color: var(--accent); }
 .seat-grid .btn.dead { opacity: 0.35; }
 
 .check-results { display: flex; gap: 8px; }
 .check-results .btn { flex: 1; }
 
-/* удержание для показа секретного блока */
-.hold-cover {
-  position: absolute;
-  inset: 0;
-  z-index: 5;
-  border-radius: 10px;
-  background: rgba(20, 22, 28, 0.92);
-  border: 1px dashed var(--border);
-  display: none;
+/* блок с уже введённым выбором: номера скрыты от соседей ведущего */
+.nb-done {
+  display: flex;
   align-items: center;
   justify-content: center;
+  /* высота сетки мест + кнопки под ней, чтобы панель не прыгала при вводе */
+  min-height: 107px;
+  border-radius: 8px;
+  background: rgba(20, 22, 28, 0.55);
+  border: 1px dashed var(--border);
   font-size: 15px;
   color: var(--dim);
-  cursor: pointer;
   user-select: none;
 }
 

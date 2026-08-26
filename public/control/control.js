@@ -21,7 +21,8 @@ let clockOffset = 0;                 // serverNow − Date.now(): поправк
 // локальное состояние интерфейса (не синхронизируется)
 let statusMenuSeat = null;          // открытый попап статуса
 let noteSeat = null;                 // открытое поле заметки в строке игрока
-let heldBlocks = new Set();         // секретные блоки, раскрытые удержанием
+let enteredBlocks = new Set();      // ночные блоки, куда ведущий уже ввёл выбор
+let enteredNight = null;            // номер ночи, к которой относится enteredBlocks
 let peekRoles = new Set();          // роли игроков, раскрытые удержанием
 let winDismissedKey = null;         // отложенный баннер победы (ключ ситуации)
 let swapFrom = null;                // первое место для пересадки
@@ -409,7 +410,6 @@ grid.addEventListener('pointerdown', (e) => {
 });
 
 document.addEventListener('pointerup', () => {
-  if (heldBlocks.size) { heldBlocks.clear(); render(); }
   if (peekRoles.size) { peekRoles.clear(); render(); }
 });
 
@@ -459,7 +459,7 @@ function renderPlayersList() {
           <button class="btn btn-foul" data-act="foul-add" data-seat="${p.seat}" ${p.fouls >= foulRemoveAt ? 'disabled' : ''}>+</button>
         </div>
         <div class="prow-actions">
-          <button class="btn ${speaking ? 'active' : ''}" data-act="speaker" data-seat="${p.seat}" ${out ? 'disabled' : ''}>🎙 Слово</button>
+          <button class="btn ${speaking ? 'active' : ''}" data-act="speaker" data-seat="${p.seat}" ${out ? 'disabled' : ''}>🎙 Речь</button>
           <button class="btn" data-act="nominate" data-seat="${p.seat}" ${out || !speakerCanNominate || nominatedSeats.has(p.seat) ? 'disabled' : ''} title="${speaker === null ? 'Сначала выдайте слово' : ''}">☝ Выставить</button>
           <button class="btn btn-peek" data-act="peek-role" data-seat="${p.seat}" title="Удерживайте, чтобы увидеть роль">🎭</button>
           <button class="btn btn-note ${hasNote ? 'has-note' : ''}" data-act="note" data-seat="${p.seat}" title="Заметка по игроку">📝</button>
@@ -486,35 +486,34 @@ bottom.addEventListener('click', (e) => {
     case 'voting-finish': send('VOTING_FINISH'); break;
     case 'lift-yes': send('LIFT_ALL', { passed: true }); break;
     case 'lift-no': send('LIFT_ALL', { passed: false }); break;
-    case 'shot': send('SET_SHOT', { seat: btn.dataset.seat === 'miss' ? null : seat }); break;
+    case 'shot':
+      enteredBlocks.add('shot');
+      send('SET_SHOT', { seat: btn.dataset.seat === 'miss' ? null : seat });
+      break;
     case 'check-seat': {
       // клик по номеру сразу записывает проверку; повторный клик по тому же — снимает
       const who = btn.dataset.who;
       const night = state.nights[state.phase.round - 1];
       const recorded = night && night[who === 'don' ? 'donCheck' : 'sheriffCheck'];
       const next = recorded && recorded.seat === seat ? null : seat;
+      enteredBlocks.add(who);
       send(who === 'don' ? 'SET_DON_CHECK' : 'SET_SHERIFF_CHECK', { seat: next });
       break;
     }
     case 'check-none':
+      enteredBlocks.add(btn.dataset.who);
       send(btn.dataset.who === 'don' ? 'SET_DON_CHECK' : 'SET_SHERIFF_CHECK', { seat: null });
       break;
     case 'best-move': openBestMoveModal(); break;
   }
 });
 
-bottom.addEventListener('pointerdown', (e) => {
-  const cover = e.target.closest('.hold-cover');
-  if (cover) {
-    heldBlocks.add(cover.dataset.block);
-    render();
-  }
-});
-
-function seatButtons(attr, who, selectedSeat, includeDead = false) {
+// Сетка мест для ночного ввода. Выбранное место не подсвечивается: сетка живёт
+// ровно до первого нажатия, после чего блок закрывается заглушкой.
+function seatButtons(attr, who, includeDead = false) {
   return state.players.map((p) => {
     const dead = p.status !== 'alive';
-    return `<button class="btn ${selectedSeat === p.seat ? 'sel' : ''} ${dead ? 'dead' : ''}"
+    return `<button class="btn ${dead ? 'dead' : ''}"
       data-bact="${attr}" ${who ? `data-who="${who}"` : ''} data-seat="${p.seat}"
       ${dead && !includeDead ? 'disabled' : ''}>${p.seat}</button>`;
   }).join('');
@@ -536,7 +535,7 @@ function renderBottomPanel() {
 function renderDayPanel() {
   const v = state.voting;
   const chips = v.nominations.map((n) =>
-    `<div class="nom-chip"><span>${n.order}. ${nomName(n.seat)}${n.by ? ` <small class="nom-by">← №${n.by}</small>` : ''}</span>
+    `<div class="nom-chip"><span>${nomName(n.seat)}${n.by ? ` <small class="nom-by">← №${n.by}</small>` : ''}</span>
       ${v.stage === 'nominations' ? `<button class="x" data-bact="unnominate" data-seat="${n.seat}" title="Снять кандидатуру">✕</button>` : ''}
     </div>`).join('');
 
@@ -560,14 +559,14 @@ function renderDayPanel() {
     const total = v.nominations.reduce((s, n) => s + n.votes, 0);
     const rows = v.nominations.map((n) => `
       <div class="vote-row">
-        <span class="vr-name ${max > 0 && n.votes === max ? 'leader' : ''}">${n.order}. ${nomName(n.seat)}</span>
+        <span class="vr-name ${max > 0 && n.votes === max ? 'leader' : ''}">${nomName(n.seat)}</span>
         <span class="vote-count">${n.votes}</span>
         <span class="vote-quick">${Array.from({ length: alive + 1 }, (_, i) =>
           `<button class="btn ${n.votes === i ? 'sel' : ''}" data-bact="set-votes" data-seat="${n.seat}" data-votes="${i}" ${total - n.votes + i > alive ? 'disabled' : ''}>${i}</button>`).join('')}
         </span>
       </div>`).join('');
     bottom.innerHTML = `
-      <div class="bp-title">${v.stage === 'revote' ? 'Перестрелка (попил)' : `Голосование, день ${v.day}`}
+      <div class="bp-title">${v.stage === 'revote' ? 'Перестрелка' : `Голосование, день ${v.day}`}
         <span class="bp-hint">Голосов: ${total} из ${alive} за столом</span>
       </div>
       ${rows}
@@ -598,11 +597,22 @@ function renderDayPanel() {
     <div class="bp-footer"><span class="bp-hint">Дальше: «${`Ночь ${state.phase.round} →`}» в шапке. Ошиблись — «⎌ Отменить».</span></div>`;
 }
 
+// Заглушка вместо содержимого ночного блока: ввод сделан, номера скрыты, чтобы
+// сидящий рядом дон или шериф не подсмотрел отстрел и чужую проверку.
+// Ошибся ведущий — исправляет через «⎌ Отменить» в шапке.
+const NIGHT_DONE = '<p class="nb-done">✓ Выбор сделан</p>';
+
 function renderNightPanel() {
   const round = state.phase.round;
   const night = state.nights[round - 1] || {};
   const don = night.donCheck;
   const sher = night.sheriffCheck;
+
+  // отметки о вводе живут в пределах одной ночи
+  if (enteredNight !== round) {
+    enteredNight = round;
+    enteredBlocks.clear();
+  }
 
   // Результат проверки ведущий не вводит — он вычисляется сервером по роли.
   // Проверять можно и выбывших; выбывший дон/шериф проверять не может
@@ -610,31 +620,34 @@ function renderNightPanel() {
   const checkBlock = (who, title, icon, recorded) => {
     const checkerOut = state.players.some((pl) => pl.role === who && pl.status !== 'alive'
       && !(pl.status === 'killed' && night.shot === pl.seat));
-    const body = checkerOut
-      ? '<p class="bp-hint" style="padding:6px 0">Выбыл из игры — проверка недоступна.</p>'
-      : `
-        <div class="seat-grid">${seatButtons('check-seat', who, recorded ? recorded.seat : null, true)}</div>
+    // «никого не проверял» на сервере неотличимо от «ещё не вводили» (и то и другое
+    // null), поэтому такой ввод помнит только панель — до перезагрузки страницы.
+    // Выбывший проверяющий даёт ту же заглушку, что и сделанный выбор: иначе блок
+    // с надписью о выбытии сам сообщал бы столу, что дона или шерифа больше нет.
+    const entered = !!recorded || enteredBlocks.has(who) || checkerOut;
+    const body = entered ? NIGHT_DONE : `
+        <div class="seat-grid">${seatButtons('check-seat', who, true)}</div>
         <div class="check-results">
-          <button class="btn ${recorded ? '' : 'sel'}" data-bact="check-none" data-who="${who}">Никого не проверял</button>
+          <button class="btn" data-bact="check-none" data-who="${who}">Никого не проверял</button>
         </div>`;
     return `
-      <div class="nblock secret ${heldBlocks.has(who) ? 'held' : ''}">
-        <h3>${icon} ${title} <span class="current masked-secret">${recorded ? `№${recorded.seat}` : '—'}</span></h3>
+      <div class="nblock">
+        <h3>${icon} ${title} <span class="current">${entered ? '✓' : '—'}</span></h3>
         ${body}
-        <div class="hold-cover" data-block="${who}">👁 Показать (удерживать)</div>
       </div>`;
   };
 
-  const shotRecorded = night.shot !== undefined;
+  const shotEntered = night.shot !== undefined || enteredBlocks.has('shot');
   bottom.innerHTML = `
     <div class="bp-title">Ночь ${round}</div>
     <div class="night-blocks">
       <div class="nblock">
-        <h3>🎯 Отстрел мафии <span class="current">${shotRecorded ? (night.shot === null ? 'промах' : `№${night.shot}`) : '—'}</span></h3>
-        <div class="seat-grid">${seatButtons('shot', null, typeof night.shot === 'number' ? night.shot : null)}</div>
+        <h3>🎯 Отстрел мафии <span class="current">${shotEntered ? '✓' : '—'}</span></h3>
+        ${shotEntered ? NIGHT_DONE : `
+        <div class="seat-grid">${seatButtons('shot', null)}</div>
         <div class="check-results">
-          <button class="btn ${shotRecorded && night.shot === null ? 'sel' : ''}" data-bact="shot" data-seat="miss">Промах</button>
-        </div>
+          <button class="btn" data-bact="shot" data-seat="miss">Промах</button>
+        </div>`}
       </div>
       ${checkBlock('don', 'Проверка дона', '🟣', don)}
       ${checkBlock('sheriff', 'Проверка шерифа', '⭐', sher)}
