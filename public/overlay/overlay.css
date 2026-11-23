@@ -44,12 +44,14 @@ body {
 
 /* ===================== Плашки игроков ===================== */
 
-/* плашки на всю ширину кадра 1920: поля по 20px, десять плашек делят остаток
-   поровну (~179px каждая) */
+/* Поля, ширина плашек и кегль ника задаются в plates.css (переменные
+   --plates-side, --plate-flex, --nick-size) — его можно заменить готовым
+   вариантом из plates-presets/. Значения после запятой — запасные, если
+   plates.css нет: плашки на всю ширину. */
 #plates {
   position: absolute;
-  left: 20px;
-  right: 20px;
+  left: var(--plates-side, 20px);
+  right: var(--plates-side, 20px);
   bottom: 26px;
   display: flex;
   justify-content: center;
@@ -59,9 +61,9 @@ body {
 
 .plate {
   position: relative;
-  /* все плашки одной ширины (flex-basis 0): длинный ник не расширяет плашку
+  /* все плашки одной ширины: длинный ник не расширяет плашку
      (min-width:0 + усечение ника) */
-  flex: 1 1 0;
+  flex: var(--plate-flex, 1 1 0);
   min-width: 0;
   height: 194px;
   /* цвет роли по умолчанию — нейтральный; переопределяется .role-* */
@@ -133,7 +135,7 @@ body {
   align-items: flex-start;
   justify-content: center;
   padding: 0 7px;
-  font-size: 15px; /* слот ~125px: Roboto Condensed 15px — ~10 симв. в строку (не меньше прежних ~9.9) */
+  font-size: var(--nick-size, 15px); /* один кегль на все плашки, см. plates.css */
   font-weight: 600;
   letter-spacing: 0.03em;
   line-height: 1.05;
