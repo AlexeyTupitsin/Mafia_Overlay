@@ -60,6 +60,57 @@ export function displayNickname(nick) {
   return splitNickname(nick).join(' ');
 }
 
+// ---- порядок речей -----------------------------------------------------------
+// Ленту круга (state.speaking) ведёт сервер; здесь — чистые подсказки для панели.
+// Блокировки только в интерфейсе: сервер слово никому не запрещает.
+
+const isAlive = (players, seat) => players[seat - 1]?.status === 'alive';
+
+// Молчанка (3-й фол) действует в один конкретный день — тот, что записал сервер.
+export function isSilenced(speaking, seat, round) {
+  return speaking?.silenced?.[seat] === round;
+}
+
+// Первое живое место по кругу после from (from = null → считаем от №1).
+function nextAliveAfter(players, from, ok = () => true) {
+  const n = players.length;
+  const start = from || 0;
+  for (let k = 1; k <= n; k++) {
+    const seat = ((start + k - 1) % n) + 1;
+    if (isAlive(players, seat) && ok(seat)) return seat;
+  }
+  return null;
+}
+
+// Кто открывает дневной круг: следующий живой после открывавшего прошлый день.
+export function recommendedStarter(players, prevStarter) {
+  return nextAliveAfter(players, prevStarter);
+}
+
+// Угадайка — круг, когда за столом осталось 3 или 4 игрока.
+export function isGuessing(players) {
+  return players.filter((p) => p.status === 'alive').length <= 4;
+}
+
+// Какой ход у игрока в круге: 'full' — обычная речь; 'silent' — молчанка (3 фола):
+// без речи, но ход есть и кандидатуру выставить можно; 'short' — молчанка
+// в угадайке: молчащему всё же дают короткую речь (30 сек по умолчанию).
+export function speechMode(players, speaking, seat, round) {
+  if (!isSilenced(speaking, seat, round)) return 'full';
+  return isGuessing(players) ? 'short' : 'silent';
+}
+
+// Чей ход следующим: по кругу после последнего ходившего, мимо выбывших и уже
+// ходивших. Молчащих не пропускаем — у них ход без речи. null — круг пройден.
+export function nextSpeakerHint(players, speaking) {
+  const spoken = speaking?.spoken || [];
+  const ok = (seat) => !spoken.includes(seat);
+  const from = spoken.length
+    ? spoken[spoken.length - 1]
+    : (recommendedStarter(players, speaking?.prevStarter) || 1) - 1;
+  return nextAliveAfter(players, from, ok);
+}
+
 // ---- баллы игроков ----------------------------------------------------------
 
 // округление до 0.1 (шаг дробного балла)

@@ -3,8 +3,10 @@
 import { connectWS } from '/shared/ws-client.js';
 import {
   ROLES, STATUSES, RESULTS, OVERLAY_KEYS, displayBase, totalScore, displayNickname,
+  nextSpeakerHint, isSilenced, speechMode,
   escapeHtml as esc
 } from '/shared/constants.js';
+import { icon } from '/shared/icons.js';
 
 // Ник для показа в панели: «|» — точка переноса на плашке оверлея, здесь она
 // лишняя. Сырой ник виден только в поле ввода, где ведущий его и правит.
@@ -30,6 +32,7 @@ let uploadSeat = null;              // место, для которого вы�
 let bmBannerDismissed = false;
 let setupBuilt = false;
 let trackerEnabled = false;          // интеграция с трекером настроена на сервере
+let lastSpeaker = null;             // спикер прошлого рендера: прокрутка к новому
 const setupRows = [];
 
 // ---------------------------------------------------------------- связь
@@ -63,8 +66,13 @@ function send(type, payload) {
   if (!ws.send({ type, payload })) toast('Нет соединения с сервером');
 }
 
+// Идёт игра, а источник OBS не подключён — эфир без графики. Тихий серый
+// счётчик тут легко проглядеть, поэтому индикатор становится предупреждением.
 function updateConnText() {
-  $('#conn-text').textContent = `оверлей: ${clients.overlay}`;
+  const noOverlay = !!state && state.meta.status === 'in_progress' && clients.overlay === 0;
+  $('#conn-ind').classList.toggle('warn', noOverlay);
+  $('#conn-text').textContent = noOverlay ? 'нет оверлея' : `оверлей: ${clients.overlay}`;
+  $('#conn-ind').title = noOverlay ? 'Источник OBS не подключён — эфир идёт без графики' : 'Соединение';
 }
 
 // высота шапки → CSS-переменная, чтобы sticky-баннер ЛХ вставал точно под ней
@@ -146,6 +154,10 @@ $('#btn-timer-reset').onclick = () => send('TIMER_RESET');
 
 // ---------------------------------------------------------------- шапка
 
+$('#btn-undo').innerHTML = `${icon('undo')}<span class="lbl">Отменить</span>`;
+$('#btn-menu').innerHTML = icon('menu');
+$('#btn-timer-reset').innerHTML = icon('reset');
+
 $('#btn-next-phase').onclick = () => send('NEXT_PHASE');
 $('#btn-undo').onclick = () => send('UNDO');
 
@@ -206,7 +218,21 @@ $('#modal-backdrop').addEventListener('click', (e) => {
   if (e.target === $('#modal-backdrop')) closeModal();
 });
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') { closeModal(); $('#menu-popover').hidden = true; }
+  if (e.key === 'Escape') { closeModal(); $('#menu-popover').hidden = true; return; }
+
+  // Горячие клавиши для ведущего за ноутбуком. Не срабатывают при вводе текста
+  // и при открытой модалке — там пробел и Ctrl+Z нужны полям.
+  if (!state || e.target.closest('input, textarea, select') || !$('#modal-backdrop').hidden) return;
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.code === 'KeyZ') {
+    e.preventDefault();
+    if (undoDepth > 0) send('UNDO');
+    return;
+  }
+  if (e.code === 'Space' && state.meta.status === 'in_progress' && !e.repeat) {
+    e.preventDefault(); // иначе пробел «нажмёт» кнопку в фокусе или прокрутит страницу
+    if (state.speaker.timer.running) send('TIMER_PAUSE');
+    else send('TIMER_START');
+  }
 });
 
 function openSettingsModal() {
@@ -265,9 +291,9 @@ function openNewGameModal() {
 
 function openFinishModal() {
   openModal('Завершить игру', `<div class="result-buttons">
-      <button class="btn" data-result="city_win">🔴 Победа мирных</button>
-      <button class="btn" data-result="mafia_win">⚫ Победа мафии</button>
-      <button class="btn" data-result="draw">⚪ Ничья</button>
+      <button class="btn" data-result="city_win"><span class="rdot rd-city"></span>Победа мирных</button>
+      <button class="btn" data-result="mafia_win"><span class="rdot rd-mafia"></span>Победа мафии</button>
+      <button class="btn" data-result="draw"><span class="rdot rd-draw"></span>Ничья</button>
     </div>`, [{ label: 'Отмена', onClick: closeModal }]);
   $('#modal-body').querySelectorAll('[data-result]').forEach((btn) => {
     btn.onclick = () => { send('FINISH_GAME', { result: btn.dataset.result }); closeModal(); };
@@ -356,8 +382,14 @@ grid.addEventListener('click', (e) => {
     case 'speaker': {
       const next = state.speaker.seat === seat ? null : seat;
       send('SET_SPEAKER', { seat: next });
-      // при выдаче слова автоматически запускаем таймер речи (60 сек)
-      if (next !== null) send('TIMER_START', { durationMs: state.settings.speechSec * 1000 });
+      // при выдаче слова сразу запускаем таймер: обычная речь — 60 сек; молчащему
+      // в угадайке — короткая (30 сек); ход без речи (молчанка) — без таймера,
+      // игрок только может выставить кандидатуру
+      const mode = btn.dataset.mode;
+      if (next !== null && mode !== 'silent') {
+        const sec = mode === 'short' ? state.settings.shortSpeechSec : state.settings.speechSec;
+        send('TIMER_START', { durationMs: sec * 1000 });
+      }
       break;
     }
     case 'foul-add': {
@@ -420,19 +452,38 @@ function renderPlayersList() {
   const v = state.voting;
   const speaker = state.speaker.seat;
   const nominatedSeats = new Set(v.nominations.map((n) => n.seat));
-  const speakerCanNominate = state.phase.kind === 'day' && v.stage === 'nominations'
+  const nominationStage = state.phase.kind === 'day' && v.stage === 'nominations';
+  const speakerCanNominate = nominationStage
     && speaker !== null && !v.nominations.some((n) => n.by === speaker);
+  // Порядок речей: ленту круга ведёт сервер, здесь — только запреты и подсказки.
+  // Круг — обсуждение дня, то есть этап выставления.
+  const round = state.phase.round;
+  const sp = state.speaking;
+  const spoken = new Set(sp ? sp.spoken : []);
+  const hintSeat = nominationStage && sp ? nextSpeakerHint(state.players, sp) : null;
   grid.innerHTML = state.players.map((p) => {
     const out = p.status !== 'alive';
     const speaking = state.speaker.seat === p.seat;
     const silence = !out && p.fouls >= foulSilenceAt && p.fouls < foulRemoveAt;
+    const silencedDay = sp && sp.silenced ? sp.silenced[p.seat] : undefined;
+    const silencedNow = !out && isSilenced(sp, p.seat, round);
+    const hasSpoken = nominationStage && spoken.has(p.seat);
+    // Ход в круге есть у всех: молчащий (3 фола) ходит без речи, но выставить
+    // кандидатуру может; в угадайке (3–4 за столом) молчащему дают 30 сек.
+    const mode = nominationStage && silencedNow ? speechMode(state.players, sp, p.seat, round) : 'full';
+    // повторный ход в круге не даём; текущему спикеру кнопка нужна, чтобы снять слово
+    const speechBlock = nominationStage && !speaking && hasSpoken ? 'Уже ходил в этом круге' : '';
+    const isNext = !out && !speaking && hintSeat === p.seat;
     const peek = peekRoles.has(p.seat);
     const roleText = p.role ? ROLES[p.role].label : 'роль не назначена';
     const statusText = peek
       ? roleText
       : out
         ? STATUSES[p.status].label
-        : silence ? `${p.fouls} фола — без речи` : '';
+        : silencedNow ? (mode === 'short' ? `${p.fouls} фола — угадайка, ${state.settings.shortSpeechSec} сек` : `${p.fouls} фола — без речи`)
+          : silence && silencedDay > round ? `${p.fouls} фола — молчит в день ${silencedDay}`
+            : silence ? `${p.fouls} фола`
+              : hasSpoken && !speaking ? '✓ говорил' : '';
     const dots = [1, 2, 3, 4].map((f) =>
       `<span class="fdot ${f <= p.fouls ? `on${f >= foulRemoveAt ? ' last' : ''}` : ''}"></span>`).join('');
     const statusPop = statusMenuSeat === p.seat ? `
@@ -441,29 +492,33 @@ function renderPlayersList() {
           `<button class="btn ${p.status === key ? 'active' : ''}" data-act="set-status" data-seat="${p.seat}" data-status="${key}">${st.label}</button>`).join('')}
       </div>` : '';
     const hasNote = !!(p.comment && p.comment.trim());
+    // «Выставить» нужна только на этапе выставления: в остальное время это десять
+    // серых неактивных кнопок, которые лишь отвлекают
+    const showNominate = !out && nominationStage;
     const notePop = noteSeat === p.seat ? `
       <div class="note-pop">
         <input type="text" maxlength="300" data-seat="${p.seat}" value="${esc(p.comment)}" placeholder="Заметка по игроку…">
       </div>` : '';
     return `
-      <div class="prow ${out ? 'out' : ''} ${speaking ? 'speaking' : ''}">
+      <div class="prow ${out ? 'out' : ''} ${speaking ? 'speaking' : ''} ${isNext ? 'is-next' : ''}">
         <span class="prow-num">${p.seat}</span>
         <div class="prow-photo" style="${p.photo ? `background-image:url('${p.photo}')` : ''}"></div>
         <div class="prow-main">
           <span class="prow-nick">${nick(p.nickname) || '—'}</span>
-          ${statusText ? `<span class="prow-status ${peek ? 'role' : (out || silence ? 'bad' : '')}">${statusText}</span>` : ''}
+          ${isNext && !statusText ? '<span class="prow-status next"><span class="next-pill">следующий</span></span>' : ''}
+          ${statusText ? `<span class="prow-status ${peek ? 'role' : (out || silencedNow ? 'bad' : (hasSpoken ? 'done' : ''))}" title="${silencedNow && mode === 'silent' ? `${statusText}, но выставить кандидатуру может` : statusText}">${statusText}</span>` : ''}
         </div>
         <div class="prow-fouls">
-          <button class="btn btn-foul" data-act="foul-del" data-seat="${p.seat}" ${p.fouls === 0 ? 'disabled' : ''}>−</button>
+          ${out ? '' : `<button class="btn btn-foul ${p.fouls === 0 ? 'is-void' : ''}" data-act="foul-del" data-seat="${p.seat}" ${p.fouls === 0 ? 'disabled' : ''} aria-label="Снять фол">−</button>`}
           <span class="fdots">${dots}</span>
-          <button class="btn btn-foul" data-act="foul-add" data-seat="${p.seat}" ${p.fouls >= foulRemoveAt ? 'disabled' : ''}>+</button>
+          ${out ? '' : `<button class="btn btn-foul" data-act="foul-add" data-seat="${p.seat}" ${p.fouls >= foulRemoveAt ? 'disabled' : ''} aria-label="Добавить фол">+</button>`}
         </div>
         <div class="prow-actions">
-          <button class="btn ${speaking ? 'active' : ''}" data-act="speaker" data-seat="${p.seat}" ${out ? 'disabled' : ''}>🎙 Речь</button>
-          <button class="btn" data-act="nominate" data-seat="${p.seat}" ${out || !speakerCanNominate || nominatedSeats.has(p.seat) ? 'disabled' : ''} title="${speaker === null ? 'Сначала выдайте слово' : ''}">☝ Выставить</button>
-          <button class="btn btn-peek" data-act="peek-role" data-seat="${p.seat}" title="Удерживайте, чтобы увидеть роль">🎭</button>
-          <button class="btn btn-note ${hasNote ? 'has-note' : ''}" data-act="note" data-seat="${p.seat}" title="Заметка по игроку">📝</button>
-          <button class="btn" data-act="status-menu" data-seat="${p.seat}">⋮</button>
+          ${out ? '' : speechButton(p.seat, speaking, mode, speechBlock)}
+          ${showNominate ? `<button class="btn" data-act="nominate" data-seat="${p.seat}" ${!speakerCanNominate || nominatedSeats.has(p.seat) ? 'disabled' : ''} title="${speaker === null ? 'Сначала выдайте слово' : ''}">${icon('hand')}<span>Выставить</span></button>` : ''}
+          <button class="btn btn-ico btn-peek" data-act="peek-role" data-seat="${p.seat}" title="Удерживайте, чтобы увидеть роль" aria-label="Показать роль">${icon('eye')}</button>
+          <button class="btn btn-ico btn-note ${hasNote ? 'has-note' : ''}" data-act="note" data-seat="${p.seat}" title="Заметка по игроку" aria-label="Заметка">${icon('note')}</button>
+          <button class="btn btn-ico" data-act="status-menu" data-seat="${p.seat}" title="Статус игрока" aria-label="Статус игрока">${icon('more')}</button>
         </div>
         ${statusPop}
         ${notePop}
@@ -474,6 +529,8 @@ function renderPlayersList() {
 // ---------------------------------------------------------------- нижняя панель
 
 const bottom = $('#bottom-panel');
+// кандидат, которому общая клавиатура голосов сейчас записывает число (только в панели)
+let voteSel = null;
 
 bottom.addEventListener('click', (e) => {
   const btn = e.target.closest('[data-bact]');
@@ -482,7 +539,16 @@ bottom.addEventListener('click', (e) => {
   switch (btn.dataset.bact) {
     case 'unnominate': send('UNNOMINATE', { seat }); break;
     case 'voting-start': send('VOTING_START'); break;
-    case 'set-votes': send('SET_VOTES', { seat, votes: Number(btn.dataset.votes) }); break;
+    case 'vote-sel': voteSel = seat; renderBottomPanel(); break;
+    case 'set-votes': {
+      send('SET_VOTES', { seat, votes: Number(btn.dataset.votes) });
+      // голоса считают по очереди — выбор сам переходит к следующему кандидату
+      const noms = state.voting.nominations;
+      const i = noms.findIndex((n) => n.seat === seat);
+      if (i >= 0 && i < noms.length - 1) voteSel = noms[i + 1].seat;
+      renderBottomPanel();
+      break;
+    }
     case 'voting-finish': send('VOTING_FINISH'); break;
     case 'lift-yes': send('LIFT_ALL', { passed: true }); break;
     case 'lift-no': send('LIFT_ALL', { passed: false }); break;
@@ -532,6 +598,26 @@ function renderBottomPanel() {
   }
 }
 
+// Кнопка хода в строке игрока: «Речь», «Речь 30с» (молчащему в угадайке)
+// или «Ход» (молчанка: без речи и таймера, но с правом выставить кандидатуру)
+function speechButton(seat, speaking, mode, block) {
+  const label = mode === 'silent' ? 'Ход' : mode === 'short' ? `Речь ${state.settings.shortSpeechSec}с` : 'Речь';
+  const ico = mode === 'silent' ? icon('hand') : icon('mic');
+  const title = block || (mode === 'silent' ? 'Молчанка: без речи, но может выставить кандидатуру' : '');
+  return `<button class="btn btn-speech ${speaking ? 'active' : ''}" data-act="speaker" data-seat="${seat}" data-mode="${mode}" ${block ? 'disabled' : ''} ${title ? `title="${title}"` : ''}>${ico}<span>${label}</span></button>`;
+}
+
+// «Ходы: 4 из 8» — сколько живых уже прошли свой ход в круге дня
+// (молчащие тоже: ход у них есть, только без речи)
+function speechProgress() {
+  const sp = state.speaking;
+  const eligible = state.players.filter((p) => p.status === 'alive');
+  const done = eligible.filter((p) => sp && sp.spoken.includes(p.seat)).length;
+  return eligible.length > 0 && done >= eligible.length
+    ? 'Круг пройден'
+    : `Ходы: ${done} из ${eligible.length}`;
+}
+
 function renderDayPanel() {
   const v = state.voting;
   const chips = v.nominations.map((n) =>
@@ -542,8 +628,9 @@ function renderDayPanel() {
   if (v.stage === 'nominations') {
     bottom.innerHTML = `
       <div class="bp-title">Кандидатуры дня ${v.day}
-        <span class="bp-hint">Выставляет тот, у кого слово; один игрок — одна кандидатура</span>
+        <span class="bp-hint">${speechProgress()}</span>
       </div>
+      <p class="bp-hint bp-sub">Выставляет тот, у кого слово; один игрок — одна кандидатура</p>
       <div class="nom-list">${chips || '<span class="bp-hint">Пока никого не выставили</span>'}</div>
       <div class="bp-footer">
         <button class="btn btn-accent btn-big" data-bact="voting-start" ${v.nominations.length === 0 ? 'disabled' : ''}>Начать голосование</button>
@@ -557,21 +644,30 @@ function renderDayPanel() {
   if (v.stage === 'voting' || v.stage === 'revote') {
     const max = Math.max(...v.nominations.map((n) => n.votes));
     const total = v.nominations.reduce((s, n) => s + n.votes, 0);
+    // Компактно: кандидаты списком (имя + голоса), под ними одна общая клавиатура
+    // 0…N для выбранного кандидата. Раньше у каждого был свой ряд из 11 кнопок —
+    // на iPad панель не помещалась в экран.
+    if (!v.nominations.some((n) => n.seat === voteSel)) voteSel = v.nominations[0]?.seat ?? null;
+    const cur = v.nominations.find((n) => n.seat === voteSel);
     const rows = v.nominations.map((n) => `
-      <div class="vote-row">
+      <button class="vote-row ${n.seat === voteSel ? 'sel' : ''}" data-bact="vote-sel" data-seat="${n.seat}">
         <span class="vr-name ${max > 0 && n.votes === max ? 'leader' : ''}">${nomName(n.seat)}</span>
         <span class="vote-count">${n.votes}</span>
-        <span class="vote-quick">${Array.from({ length: alive + 1 }, (_, i) =>
-          `<button class="btn ${n.votes === i ? 'sel' : ''}" data-bact="set-votes" data-seat="${n.seat}" data-votes="${i}" ${total - n.votes + i > alive ? 'disabled' : ''}>${i}</button>`).join('')}
-        </span>
-      </div>`).join('');
+      </button>`).join('');
+    const pad = cur ? Array.from({ length: alive + 1 }, (_, i) =>
+      `<button class="btn ${cur.votes === i ? 'sel' : ''}" data-bact="set-votes" data-seat="${cur.seat}" data-votes="${i}" ${total - cur.votes + i > alive ? 'disabled' : ''}>${i}</button>`).join('') : '';
     bottom.innerHTML = `
-      <div class="bp-title">${v.stage === 'revote' ? 'Перестрелка' : `Голосование, день ${v.day}`}
-        <span class="bp-hint">Голосов: ${total} из ${alive} за столом</span>
+      <div class="bp-title">
+        <span>${v.stage === 'revote' ? 'Перестрелка' : `Голосование, день ${v.day}`}
+          <span class="bp-hint vote-total">Голосов: ${total} из ${alive}</span></span>
+        <button class="btn btn-accent" data-bact="voting-finish">Завершить голосование</button>
       </div>
-      ${rows}
-      <div class="bp-footer">
-        <button class="btn btn-accent btn-big" data-bact="voting-finish">Завершить голосование</button>
+      <div class="vote-wrap">
+        <div class="vote-list">${rows}</div>
+        <div class="vote-pad">
+          <div class="vote-pad-for">${cur ? `Голоса за ${nomName(cur.seat)}` : ''}</div>
+          <div class="vote-keys">${pad}</div>
+        </div>
       </div>`;
     return;
   }
@@ -594,12 +690,12 @@ function renderDayPanel() {
     <p style="font-size:17px">${voted && voted.seats.length
       ? `Покинул(и) стол: <b>${voted.seats.map(nomName).join(', ')}</b>`
       : 'Никто не покинул стол'}</p>
-    <div class="bp-footer"><span class="bp-hint">Дальше: «${`Ночь ${state.phase.round} →`}» в шапке. Ошиблись — «⎌ Отменить».</span></div>`;
+    <div class="bp-footer"><span class="bp-hint">Дальше: «${`Ночь ${state.phase.round} →`}» в шапке. Ошиблись — «Отменить» (Ctrl+Z).</span></div>`;
 }
 
 // Заглушка вместо содержимого ночного блока: ввод сделан, номера скрыты, чтобы
 // сидящий рядом дон или шериф не подсмотрел отстрел и чужую проверку.
-// Ошибся ведущий — исправляет через «⎌ Отменить» в шапке.
+// Ошибся ведущий — исправляет через «Отменить» в шапке.
 const NIGHT_DONE = '<p class="nb-done">✓ Выбор сделан</p>';
 
 function renderNightPanel() {
@@ -617,7 +713,7 @@ function renderNightPanel() {
   // Результат проверки ведущий не вводит — он вычисляется сервером по роли.
   // Проверять можно и выбывших; выбывший дон/шериф проверять не может
   // (кроме отстрелянного этой же ночью — он покинет стол только утром).
-  const checkBlock = (who, title, icon, recorded) => {
+  const checkBlock = (who, title, ico, recorded) => {
     const checkerOut = state.players.some((pl) => pl.role === who && pl.status !== 'alive'
       && !(pl.status === 'killed' && night.shot === pl.seat));
     // «никого не проверял» на сервере неотличимо от «ещё не вводили» (и то и другое
@@ -632,7 +728,7 @@ function renderNightPanel() {
         </div>`;
     return `
       <div class="nblock">
-        <h3>${icon} ${title} <span class="current">${entered ? '✓' : '—'}</span></h3>
+        <h3><span class="nb-title">${ico} ${title}</span> <span class="current">${entered ? '✓' : '—'}</span></h3>
         ${body}
       </div>`;
   };
@@ -642,15 +738,15 @@ function renderNightPanel() {
     <div class="bp-title">Ночь ${round}</div>
     <div class="night-blocks">
       <div class="nblock">
-        <h3>🎯 Отстрел мафии <span class="current">${shotEntered ? '✓' : '—'}</span></h3>
+        <h3><span class="nb-title">${icon('crosshair')} Отстрел мафии</span> <span class="current">${shotEntered ? '✓' : '—'}</span></h3>
         ${shotEntered ? NIGHT_DONE : `
         <div class="seat-grid">${seatButtons('shot', null)}</div>
         <div class="check-results">
           <button class="btn" data-bact="shot" data-seat="miss">Промах</button>
         </div>`}
       </div>
-      ${checkBlock('don', 'Проверка дона', '🟣', don)}
-      ${checkBlock('sheriff', 'Проверка шерифа', '⭐', sher)}
+      ${checkBlock('don', 'Проверка дона', `<span class="ni-don">${icon('hat')}</span>`, don)}
+      ${checkBlock('sheriff', 'Проверка шерифа', `<span class="ni-sheriff">${icon('star')}</span>`, sher)}
     </div>`;
 }
 
@@ -665,7 +761,7 @@ function renderBestMoveBanner() {
   banner.hidden = !show;
   if (show) {
     banner.innerHTML = `
-      <span>⭐ Лучший ход: игрок №${bm.by} убит первым — может назвать до 3 подозреваемых</span>
+      <span class="banner-text"><span class="ni-sheriff">${icon('star')}</span> Лучший ход: игрок №${bm.by} убит первым — может назвать до 3 подозреваемых</span>
       <span style="display:flex;gap:8px">
         <button class="btn btn-accent" id="bm-open">Ввести ЛХ</button>
         <button class="btn" id="bm-skip">Без ЛХ</button>
@@ -699,7 +795,7 @@ function renderWinBanner() {
   banner.hidden = !show;
   if (show) {
     banner.innerHTML = `
-      <span>🏁 ${text}</span>
+      <span class="banner-text">${icon('flag')} ${text}</span>
       <span style="display:flex;gap:8px">
         <button class="btn btn-accent" id="win-finish">Завершить игру</button>
         <button class="btn" id="win-later">Позже</button>
@@ -766,9 +862,10 @@ async function sendGameToTracker(force) {
     });
     const data = await res.json();
     if (res.status === 409 && !force) {
-      if (window.confirm('Игра уже отправлена в рейтинг. Отправить ещё раз? В трекере появится дубль.')) {
-        return await sendGameToTracker(true);
-      }
+      openModal('Игра уже в рейтинге', '<p>Отправить ещё раз? В трекере появится дубль этой игры.</p>', [
+        { label: 'Не отправлять', onClick: closeModal },
+        { label: 'Отправить дубль', cls: 'btn-danger', onClick: () => { closeModal(); sendGameToTracker(true); } }
+      ]);
       return;
     }
     if (!res.ok) throw new Error(data.error || 'Ошибка отправки');
@@ -900,6 +997,10 @@ function buildSetup() {
   $('#meta-title').onchange = () => send('SET_META', { title: $('#meta-title').value });
   $('#meta-number').onchange = () => send('SET_META', { gameNumber: Number($('#meta-number').value) || null });
   $('#btn-start-game').onclick = () => send('START_GAME');
+  // шесть нажатий «Мир» одним: всем, кому роль ещё не выдана
+  $('#btn-fill-civilians').onclick = () => {
+    for (const p of state.players) if (!p.role) send('SET_ROLE', { seat: p.seat, role: 'civilian' });
+  };
   setupBuilt = true;
 }
 
@@ -928,6 +1029,13 @@ function updateSetup() {
   const summary = $('#roles-summary');
   summary.textContent = ok ? 'Состав ролей готов' : `Назначено ролей: ${assigned}/10`;
   summary.classList.toggle('ok', ok);
+
+  // «Остальным — мирный» — когда дон, шериф и обе мафии уже назначены, а свободных
+  // мест ровно столько, сколько не хватает мирных. Кому что досталось, кнопка не выдаёт.
+  const free = state.players.filter((p) => !p.role).length;
+  $('#btn-fill-civilians').hidden = !(free > 0 && count('mafia') === 2 && count('don') === 1
+    && count('sheriff') === 1 && count('civilian') + free === 6);
+  $('#btn-start-game').disabled = !ok;
 }
 
 // ---------------------------------------------------------------- финальный экран
@@ -987,17 +1095,20 @@ function render() {
 
   // шапка
   const phase = state.phase;
-  $('#phase-label').textContent =
+  $('#phase-label').innerHTML =
     status === 'setup' ? 'Подготовка'
       : status === 'finished' ? 'Игра завершена'
-        : `${phase.kind === 'day' ? '☀ День' : '🌙 Ночь'} ${phase.round}`;
+        : `${icon(phase.kind === 'day' ? 'sun' : 'moon')}<span>${phase.kind === 'day' ? 'День' : 'Ночь'} ${phase.round}</span>`;
+  $('#phase-label').className = status === 'in_progress' ? `ph-${phase.kind}` : '';
 
   const nextBtn = $('#btn-next-phase');
   nextBtn.hidden = status !== 'in_progress';
-  nextBtn.textContent = phase.kind === 'day' ? `Ночь ${phase.round} →` : `День ${phase.round + 1} →`;
+  nextBtn.innerHTML = `<span>${phase.kind === 'day' ? `Ночь ${phase.round}` : `День ${phase.round + 1}`}</span>${icon('arrowRight')}`;
 
   $('#timer-box').hidden = status !== 'in_progress';
-  $('#btn-timer-toggle').textContent = state.speaker.timer.running ? '⏸' : '▶';
+  const running = state.speaker.timer.running;
+  $('#btn-timer-toggle').innerHTML = icon(running ? 'pause' : 'play');
+  $('#btn-timer-toggle').setAttribute('aria-label', running ? 'Пауза (пробел)' : 'Старт (пробел)');
   $('#btn-timer-60').textContent = String(state.settings.speechSec);
   $('#btn-timer-30').textContent = String(state.settings.shortSpeechSec);
 
@@ -1010,12 +1121,20 @@ function render() {
     // ночью список игроков скрыт — на панели только отстрел и проверки дона/шерифа
     const isNight = phase.kind === 'night';
     $('#players-grid').hidden = isNight;
+    // днём на широком экране — две колонки (игроки | панель фазы), ночью одна
+    $('#game-screen').classList.toggle('is-night', isNight);
     if (!isNight) renderPlayersList();
+    // новый спикер может оказаться за краем экрана — показываем его строку
+    if (!isNight && state.speaker.seat !== null && state.speaker.seat !== lastSpeaker) {
+      grid.children[state.speaker.seat - 1]?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+    lastSpeaker = state.speaker.seat;
     renderBottomPanel();
     renderBestMoveBanner();
     renderWinBanner();
   } else if (status === 'finished') {
     $('#finished-result').textContent = RESULTS[state.meta.result] || 'Игра завершена';
+    $('#finished-result').className = `res-${state.meta.result || 'none'}`;
     const sendBtn = $('#btn-send-tracker');
     sendBtn.hidden = !trackerEnabled;
     const sent = !!state.meta.trackerGameId;

@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Панель ведущего — мафия</title>
+  <link rel="stylesheet" href="/shared/fonts.css">
   <link rel="stylesheet" href="control.css">
 </head>
 <body>
@@ -17,14 +18,14 @@
       <div id="timer-display">60</div>
       <button class="btn" id="btn-timer-60">60</button>
       <button class="btn" id="btn-timer-30">30</button>
-      <button class="btn" id="btn-timer-toggle">▶</button>
-      <button class="btn" id="btn-timer-reset">⟲</button>
+      <button class="btn btn-ico" id="btn-timer-toggle" aria-label="Старт (пробел)"></button>
+      <button class="btn btn-ico" id="btn-timer-reset" title="Сбросить таймер" aria-label="Сбросить таймер"></button>
     </div>
 
     <div class="tb-group">
-      <button class="btn" id="btn-undo" disabled>⎌ Отменить</button>
+      <button class="btn" id="btn-undo" disabled title="Отменить (Ctrl+Z)"></button>
       <div id="conn-ind" title="Соединение"><span class="dot"></span><span id="conn-text">…</span></div>
-      <button class="btn" id="btn-menu">☰</button>
+      <button class="btn btn-ico" id="btn-menu" aria-label="Меню"></button>
     </div>
   </header>
 
@@ -62,7 +63,10 @@
     <div id="setup-rows"></div>
     <div class="setup-footer">
       <div id="roles-summary"></div>
-      <button class="btn btn-big btn-accent" id="btn-start-game">Начать игру</button>
+      <div class="setup-actions">
+        <button class="btn btn-big" id="btn-fill-civilians" hidden>Остальным — мирный</button>
+        <button class="btn btn-big btn-accent" id="btn-start-game">Начать игру</button>
+      </div>
     </div>
   </main>
 

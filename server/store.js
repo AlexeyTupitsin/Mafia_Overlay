@@ -2,7 +2,7 @@
 // Сервер — единственный источник истины: клиенты шлют действия и рендерят state.
 
 import { randomUUID } from 'node:crypto';
-import { handlers, labelFor, NOT_UNDOABLE, NOT_LOGGED, ValidationError } from './actions.js';
+import { handlers, labelFor, NOT_UNDOABLE, NOT_LOGGED, ValidationError, createSpeaking } from './actions.js';
 import * as undo from './undo.js';
 import * as persistence from './persistence.js';
 
@@ -51,6 +51,7 @@ export function createInitialState() {
       seat: null,
       timer: { running: false, endsAt: null, remainingMs: 60000, durationMs: 60000 }
     },
+    speaking: createSpeaking(1),
     voting: { active: false, day: 1, stage: 'nominations', nominations: [], liftAllVotes: null },
     bestMove: { by: null, picks: [] },
     nights: [],
@@ -60,9 +61,18 @@ export function createInitialState() {
   };
 }
 
+// Автосейв версии до контроля порядка речей — подставляем пустой круг
+// под текущий день, чтобы панель не упала на отсутствующем поле.
+export function normalizeLoaded(loaded) {
+  if (!loaded.speaking) loaded.speaking = createSpeaking(loaded.phase?.round || 1);
+  if (!loaded.speaking.silenced) loaded.speaking.silenced = {};
+  return loaded;
+}
+
 export function init(settingsDefaults = {}) {
   defaults = settingsDefaults;
-  state = persistence.loadAutosave() || createInitialState();
+  const loaded = persistence.loadAutosave();
+  state = loaded ? normalizeLoaded(loaded) : createInitialState();
 }
 
 export function getState() {

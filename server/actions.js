@@ -71,6 +71,37 @@ function resetTimer(state, durationMs) {
   t.remainingMs = t.durationMs;
 }
 
+// Лента дневного круга речей (контроль порядка слова в панели ведущего).
+export function createSpeaking(round, prevStarter = null) {
+  return {
+    round,              // дневной раунд, к которому относится круг
+    spoken: [],         // места в порядке выдачи слова в этом круге
+    circleStarter: null, // кто открыл текущий круг (первое слово)
+    prevStarter,        // кто открывал прошлый день — основа подсказки старта
+    silenced: {}        // место → день молчанки (3-й фол): слово в этот день не дают
+  };
+}
+
+// Обсуждение дня — этап выставления: только эти речи составляют круг.
+// Речи на голосовании, перестрелке и прощальные в круг не идут.
+function inDiscussion(state) {
+  return state.meta.status === 'in_progress' && state.phase.kind === 'day'
+    && state.voting.stage === 'nominations';
+}
+
+// Новый дневной круг. Открывавший прошлый день запоминается, только если в том
+// дне кто-то реально говорил; молчанки других дней сохраняются.
+function startCircle(state, round) {
+  const sp = state.speaking;
+  state.speaking = {
+    round,
+    spoken: [],
+    circleStarter: null,
+    prevStarter: sp.circleStarter ?? sp.prevStarter,
+    silenced: sp.silenced || {}
+  };
+}
+
 function resetVotingForDay(state, day) {
   state.voting = { active: false, day, stage: 'nominations', nominations: [], liftAllVotes: null };
 }
@@ -186,6 +217,7 @@ export const handlers = {
     state.meta.startedAt = new Date().toISOString();
     state.phase = { kind: 'day', round: 1 };
     resetVotingForDay(state, 1);
+    state.speaking = createSpeaking(1);
     resetTimer(state, state.settings.speechSec * 1000);
   },
 
@@ -203,6 +235,7 @@ export const handlers = {
     if (p.kind === 'day' && state.voting.day !== round) {
       resetVotingForDay(state, round);
     }
+    if (p.kind === 'day' && state.speaking.round !== round) startCircle(state, round);
   },
 
   NEXT_PHASE(state) {
@@ -215,6 +248,7 @@ export const handlers = {
     } else {
       state.phase = { kind: 'day', round: state.phase.round + 1 };
       resetVotingForDay(state, state.phase.round);
+      startCircle(state, state.phase.round);
     }
     state.speaker.seat = null;
     resetTimer(state);
@@ -224,7 +258,14 @@ export const handlers = {
     if (p.seat === null) {
       state.speaker.seat = null;
     } else {
-      state.speaker.seat = getPlayer(state, p.seat).seat;
+      const seat = getPlayer(state, p.seat).seat;
+      state.speaker.seat = seat;
+      // ведём ленту круга; повтор и молчащего не отклоняем — запрет только в панели
+      const sp = state.speaking;
+      if (inDiscussion(state) && !sp.spoken.includes(seat)) {
+        if (sp.spoken.length === 0) sp.circleStarter = seat;
+        sp.spoken.push(seat);
+      }
     }
     resetTimer(state, state.settings.speechSec * 1000);
   },
@@ -263,12 +304,20 @@ export const handlers = {
       throw new ValidationError(`У игрока уже ${player.fouls} фола`);
     }
     player.fouls += 1;
+    // 3-й фол — молчанка: игрок теряет ближайшую речь. Ещё не говорил в идущем
+    // обсуждении — молчит в нём же, иначе (уже говорил, голосование, ночь) —
+    // в следующем дне.
+    if (player.fouls === state.settings.foulSilenceAt && state.meta.status === 'in_progress') {
+      const now = inDiscussion(state) && !state.speaking.spoken.includes(player.seat);
+      state.speaking.silenced[player.seat] = now ? state.phase.round : state.phase.round + 1;
+    }
   },
 
   REMOVE_FOUL(state, p) {
     const player = getPlayer(state, p.seat);
     if (player.fouls <= 0) throw new ValidationError('У игрока нет фолов');
     player.fouls -= 1;
+    if (player.fouls < state.settings.foulSilenceAt) delete state.speaking.silenced[player.seat];
   },
 
   SET_STATUS(state, p) {

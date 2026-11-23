@@ -15,6 +15,8 @@
   --c-mafia: #0d0f14;
   --c-don: #8040c9;
   --c-sheriff: #e8b31e;
+  /* узкий шрифт эфира — для номеров, таймера и фазы (как на оверлее) */
+  --font-num: 'Roboto Condensed', 'Segoe UI', Roboto, Arial, sans-serif;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -33,6 +35,11 @@ body {
 button { font-family: inherit; }
 
 .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  white-space: nowrap;
   min-height: 44px;
   padding: 8px 16px;
   font-size: 16px;
@@ -50,6 +57,12 @@ button { font-family: inherit; }
 .btn-danger { background: var(--red); border-color: var(--red); }
 .btn-big { font-size: 18px; padding: 12px 28px; }
 
+/* SVG-иконки (public/shared/icons.js) — по базовой линии текста кнопки */
+.ico { flex-shrink: 0; display: block; }
+.btn .ico { font-size: 1.15em; }
+/* кнопка только с иконкой — квадратная, подпись в aria-label/title */
+.btn-ico { min-width: 44px; padding-left: 0; padding-right: 0; font-size: 17px; }
+
 /* ------------- шапка ------------- */
 
 #topbar {
@@ -59,18 +72,31 @@ button { font-family: inherit; }
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  flex-wrap: wrap;
+  gap: 8px 12px;
   padding: 10px 16px;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
 }
 .tb-group { display: flex; align-items: center; gap: 8px; }
 
-#phase-label { font-size: 22px; font-weight: 800; white-space: nowrap; }
+#phase-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-num);
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+#phase-label.ph-day .ico { color: var(--c-sheriff); }
+#phase-label.ph-night .ico { color: #8fa6ff; }
 
 #timer-display {
-  font-size: 30px;
-  font-weight: 800;
+  font-family: var(--font-num);
+  font-size: 32px;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
   min-width: 76px;
   text-align: center;
@@ -93,6 +119,15 @@ button { font-family: inherit; }
 }
 #conn-ind .dot { width: 12px; height: 12px; border-radius: 50%; background: var(--red); }
 #conn-ind.online .dot { background: var(--green); }
+/* игра идёт, а оверлей (OBS) не подключён — эфир без графики */
+#conn-ind.warn {
+  color: #1a1206;
+  background: var(--orange);
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-weight: 700;
+}
+#conn-ind.warn .dot { background: #1a1206; }
 
 /* ------------- меню ------------- */
 
@@ -157,10 +192,15 @@ main { padding: 14px 16px 22px; }
   position: relative;
   min-height: 60px;
 }
-.prow.speaking { border-color: #fff; box-shadow: 0 0 14px rgba(255, 255, 255, 0.25); }
+/* у кого слово — видно издалека: цветная рамка, полоса слева, подкрашенный фон */
+.prow.speaking {
+  border-color: var(--accent);
+  background: #1b2741;
+  box-shadow: inset 5px 0 0 var(--accent), 0 0 18px rgba(52, 120, 246, 0.3);
+}
 .prow.out { opacity: 0.55; }
 
-.prow-num { font-size: 22px; font-weight: 800; min-width: 30px; text-align: center; }
+.prow-num { font-family: var(--font-num); font-size: 24px; font-weight: 600; min-width: 30px; text-align: center; }
 .prow-photo {
   width: 44px;
   height: 44px;
@@ -182,9 +222,25 @@ main { padding: 14px 16px 22px; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.prow-status { font-size: 12px; color: var(--dim); }
+/* статус — одной строкой: строка игрока не растёт по высоте (полный текст в title) */
+.prow-status { font-size: 12px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .prow-status.bad { color: #ff7b66; font-weight: 700; }
 .prow-status.role { color: var(--c-sheriff); font-weight: 800; font-size: 14px; }
+.prow-status.done { color: var(--green); font-weight: 600; }
+
+/* порядок речей: кому, по кругу, слово следующим (только подсказка) */
+.prow.is-next { border-style: dashed; border-color: var(--accent); }
+.next-pill {
+  display: inline-block;
+  white-space: nowrap;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: rgba(52, 120, 246, 0.18);
+  color: #8db4ff;
+  font-size: 12px;
+  font-weight: 700;
+}
+.bp-sub { margin: -4px 0 10px; }
 
 .btn-peek { padding: 6px 12px; font-size: 16px; }
 
@@ -200,10 +256,13 @@ main { padding: 14px 16px 22px; }
 .prow-fouls .fdot.on { background: var(--orange); border-color: var(--orange); }
 .prow-fouls .fdot.on.last { background: var(--red); border-color: var(--red); }
 .btn-foul { min-height: 40px; min-width: 44px; font-size: 19px; padding: 2px 10px; }
+/* «−» без фолов не нужна, но место держит — точки фолов не прыгают */
+.btn-foul.is-void { visibility: hidden; }
 
 .prow-actions { display: flex; gap: 6px; flex-shrink: 0; }
 .prow-actions .btn { padding: 6px 12px; font-size: 14px; min-height: 44px; }
 .prow-actions .btn.active { background: var(--accent); border-color: var(--accent); }
+.prow-actions .btn-ico { padding: 6px 0; font-size: 17px; }
 
 .status-pop {
   position: absolute;
@@ -256,6 +315,8 @@ main { padding: 14px 16px 22px; }
   font-weight: 600;
 }
 #win-banner { background: #14301f; border-color: var(--green); }
+.banner-text { display: inline-flex; align-items: center; gap: 8px; }
+.banner-text .ico { font-size: 20px; }
 
 /* баннеры ЛХ и победы закреплены под шапкой — ведущий видит их сразу при прокрутке */
 #best-move-banner,
@@ -302,32 +363,49 @@ main { padding: 14px 16px 22px; }
 }
 .nom-chip .x:hover { color: var(--red); }
 
+/* голосование: слева список кандидатов (нажать — выбрать), справа общая клавиатура
+   голосов; в узкой колонке клавиатура уходит под список */
+.vote-total { display: block; margin-top: 2px; font-size: 13px; }
+.vote-wrap { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: flex-start; }
+.vote-list { flex: 1 1 200px; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 .vote-row {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 0;
-  border-bottom: 1px solid var(--border);
+  width: 100%;
+  min-height: 44px;
+  padding: 2px 6px 2px 12px;
+  background: var(--panel2);
+  border: 2px solid transparent;
+  border-radius: 9px;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
-.vote-row:last-of-type { border-bottom: none; }
-.vote-row .vr-name { flex: 1; font-size: 17px; font-weight: 700; }
+.vote-row.sel { border-color: var(--accent); background: #1b2741; }
+.vote-row .vr-name { flex: 1; min-width: 0; font-size: 17px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .vote-row .vr-name.leader { color: var(--c-sheriff); }
 .vote-count {
-  font-size: 24px;
-  font-weight: 800;
+  font-family: var(--font-num);
+  font-size: 26px;
+  font-weight: 600;
   min-width: 44px;
   text-align: center;
   font-variant-numeric: tabular-nums;
 }
-.vote-quick { display: flex; gap: 4px; flex-wrap: wrap; }
-.vote-quick .btn { min-width: 40px; min-height: 40px; padding: 2px 6px; font-size: 15px; }
-.vote-quick .btn.sel { background: var(--accent); border-color: var(--accent); }
+.vote-pad { flex: 1 1 240px; min-width: 0; }
+.vote-pad-for { font-size: 12px; color: var(--dim); margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vote-keys { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 4px; }
+.vote-keys .btn { min-width: 0; min-height: 44px; padding: 2px 0; font-family: var(--font-num); font-size: 19px; }
+.vote-keys .btn.sel { background: var(--accent); border-color: var(--accent); }
 
 .bp-footer { margin-top: 12px; display: flex; gap: 10px; flex-wrap: wrap; }
 
 /* ночная фаза */
 .night-blocks { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
-@media (max-width: 1100px) { .night-blocks { grid-template-columns: 1fr; } }
+/* три блока в ряд и на iPad в альбоме (1024): столбиком шериф уходит за экран */
+@media (max-width: 999px) { .night-blocks { grid-template-columns: 1fr; } }
 
 .nblock {
   background: var(--panel2);
@@ -337,10 +415,14 @@ main { padding: 14px 16px 22px; }
   position: relative;
 }
 .nblock h3 { font-size: 16px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
+.nblock .nb-title { display: inline-flex; align-items: center; gap: 8px; }
+.nblock .nb-title .ico { font-size: 20px; }
+.ni-don { color: #b07ce8; display: inline-flex; }
+.ni-sheriff { color: var(--c-sheriff); display: inline-flex; }
 .nblock .current { font-size: 14px; color: var(--c-sheriff); font-weight: 700; }
 
 .seat-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-bottom: 9px; }
-.seat-grid .btn { min-height: 46px; font-size: 17px; padding: 4px; }
+.seat-grid .btn { min-height: 46px; font-family: var(--font-num); font-size: 19px; font-weight: 500; padding: 4px; }
 .seat-grid .btn.dead { opacity: 0.35; }
 
 .check-results { display: flex; gap: 8px; }
@@ -402,7 +484,7 @@ input[type="text"], input[type="number"] {
   user-select: none;
 }
 .srow .sdrag:active { cursor: grabbing; }
-.srow .snum { font-size: 20px; font-weight: 800; min-width: 30px; text-align: center; }
+.srow .snum { font-family: var(--font-num); font-size: 22px; font-weight: 600; min-width: 30px; text-align: center; }
 .srow .sphoto {
   width: 52px;
   height: 52px;
@@ -425,8 +507,16 @@ input[type="text"], input[type="number"] {
 /* выбранная роль не показывается — только нейтральная пометка «назначена» */
 .srow .sroles .role-assigned { min-width: 221px; color: var(--green); border-color: var(--green); }
 
+/* низ подготовки закреплён: готовность ролей и «Начать игру» видны без прокрутки */
 .setup-footer {
-  margin-top: 16px;
+  position: sticky;
+  bottom: 0;
+  z-index: 20;
+  margin: 16px -16px -22px;
+  padding: 12px 16px;
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+  box-shadow: 0 -8px 22px rgba(0, 0, 0, 0.45);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -434,20 +524,45 @@ input[type="text"], input[type="number"] {
   flex-wrap: wrap;
 }
 #roles-summary { font-size: 15px; color: var(--dim); }
+.setup-actions { display: flex; gap: 10px; flex-wrap: wrap; }
 #roles-summary.ok { color: var(--green); }
 
 /* ------------- финальный экран ------------- */
 
-#finished-screen { display: flex; justify-content: center; padding-top: 60px; }
+#finished-screen { display: flex; justify-content: center; padding-top: 24px; }
+/* карточка не шире экрана: широкая таблица баллов прокручивается внутри неё,
+   а не растягивает страницу (на телефоне страница уезжала вбок) */
 .finished-card {
+  width: 100%;
+  max-width: 980px;
+  min-width: 0;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 14px;
-  padding: 40px 48px;
+  padding: 28px 32px 0;
   text-align: center;
 }
-.finished-card h1 { margin-bottom: 24px; }
-.finished-actions { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+.finished-card h1 { margin-bottom: 18px; font-family: var(--font-num); font-weight: 600; font-size: 34px; letter-spacing: 0.02em; }
+.finished-card h1.res-city_win { color: #ff6b5e; }
+.finished-card h1.res-mafia_win { color: #c9cfdb; }
+/* действия закреплены снизу: «Протокол» и «Новая игра» видны, пока правятся баллы */
+.finished-actions {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin: 0 -32px;
+  padding: 14px 32px 18px;
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+  border-radius: 0 0 14px 14px;
+}
+/* роли после игры уже не секрет — подкрашиваем для быстрой сверки */
+.score-grid td.role-mafia, .score-grid td.role-don { color: #b9a5e8; font-weight: 700; }
+.score-grid td.role-sheriff { color: var(--c-sheriff); font-weight: 700; }
+.score-grid td.role-civilian { color: #ff8a7f; }
 
 /* ------------- модалки и тосты ------------- */
 
@@ -493,7 +608,11 @@ input[type="text"], input[type="number"] {
 .archive-item .ai-sub { font-size: 13px; color: var(--dim); }
 
 .result-buttons { display: grid; gap: 10px; margin: 10px 0 14px; }
-.result-buttons .btn { min-height: 54px; font-size: 17px; }
+.result-buttons .btn { min-height: 54px; font-size: 17px; gap: 10px; }
+.rdot { width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0; }
+.rd-city { background: var(--c-civilian); }
+.rd-mafia { background: #05060a; box-shadow: 0 0 0 2px #6b7385; }
+.rd-draw { background: #e6e9f0; }
 
 #toasts {
   position: fixed;
@@ -520,17 +639,102 @@ input[type="text"], input[type="number"] {
 .toast.info { background: var(--panel2); border: 1px solid var(--border); }
 @keyframes toast-in { from { opacity: 0; transform: translateY(14px); } }
 
-@media (max-width: 900px) {
-  .prow { flex-wrap: wrap; }
-  .prow-main { min-width: 140px; }
+/* ------------- раскладка игрового экрана ------------- */
+
+/* Широкий экран (ноутбук, планшет в альбоме — iPad 1024×768 тоже), день: игроки
+   слева, панель фазы справа и всегда на виду — голосование не уезжает за край
+   экрана и не закрывает список снизу. Ночью список игроков скрыт, и ночные блоки
+   занимают всю ширину. */
+@media (min-width: 1000px) {
+  #game-screen:not(.is-night) {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(360px, 420px);
+    column-gap: 16px;
+    align-items: start;
+  }
+  #game-screen:not(.is-night) #best-move-banner,
+  #game-screen:not(.is-night) #win-banner { grid-column: 1 / -1; }
+  #game-screen:not(.is-night) #bottom-panel {
+    margin-top: 0;
+    position: sticky;
+    top: calc(var(--topbar-h, 64px) + 14px);
+    max-height: calc(100vh - var(--topbar-h, 64px) - 28px);
+    overflow-y: auto;
+  }
+}
+/* планшет в альбоме: правая колонка поуже — строке игрока нужно место под ник */
+@media (min-width: 1000px) and (max-width: 1279px) {
+  #game-screen:not(.is-night) { grid-template-columns: minmax(0, 1fr) 280px; column-gap: 12px; }
+  #game-screen:not(.is-night) #bottom-panel .btn-big { font-size: 16px; padding-left: 14px; padding-right: 14px; }
+  main { padding-left: 10px; padding-right: 10px; }
+}
+
+@media (max-width: 1099px) {
+  /* «Отменить» — только иконкой (подсказка в title): шапке нужно место */
+  #btn-undo .lbl { display: none; }
+  #btn-undo { min-width: 44px; padding-left: 0; padding-right: 0; }
+}
+
+/* Узкий экран (планшет в портрете, телефон), день: панель фазы прилипает к низу
+   экрана, список игроков прокручивается над ней. */
+@media (max-width: 999px) {
+  #game-screen:not(.is-night) #bottom-panel {
+    position: sticky;
+    bottom: 0;
+    z-index: 35;
+    max-height: 52vh;
+    overflow-y: auto;
+    box-shadow: 0 -10px 28px rgba(0, 0, 0, 0.55);
+  }
+}
+
+/* Планшет (iPad 768 в портрете, 1024 в альбоме с правой колонкой): ряд кнопок
+   плотнее, иначе строка игрока шире колонки и под ник не остаётся места. */
+@media (min-width: 700px) and (max-width: 1279px) {
+  .prow { gap: 8px; }
+  .prow-fouls { gap: 6px; }
+  .prow-actions { gap: 4px; }
+  .prow-actions .btn { padding-left: 9px; padding-right: 9px; }
+  .prow-actions .btn-ico { min-width: 40px; padding-left: 0; padding-right: 0; }
+  .btn-foul { min-width: 40px; }
+}
+
+/* Невысокий экран (iPad: в Safari видно ~670px в альбоме и ~950px в портрете;
+   ноутбук 1366×768): строки ниже, чтобы все десять игроков помещались без
+   прокрутки. Кнопки 40px — всё ещё с запасом для пальца на планшете. */
+@media (max-height: 1000px) and (min-width: 700px) {
+  main { padding-top: 8px; padding-bottom: 10px; }
+  #players-grid { gap: 5px; }
+  .prow { min-height: 50px; padding: 3px 10px; }
+  .prow-num { font-size: 22px; }
+  .prow-photo { width: 38px; height: 38px; }
+  .prow-nick { font-size: 16px; }
+  .btn-foul { min-height: 38px; min-width: 40px; }
+  .prow-actions .btn { min-height: 40px; }
+  .prow-actions .btn-ico { min-width: 40px; }
+  #bottom-panel { padding: 12px; }
+}
+
+/* Узкий экран (телефон): строка игрока в две линии — номер, фото, ник и фолы
+   сверху, кнопки действий во всю ширину снизу. iPad в портрете (768) — ещё одной
+   строкой, иначе на экран влезает только шесть игроков. */
+@media (max-width: 699px) {
+  .prow { flex-wrap: wrap; row-gap: 6px; }
+  .prow-main { flex: 1; min-width: 0; }
+  .prow-actions { flex-basis: 100%; }
 }
 
 /* планшеты и телефоны в горизонтальной ориентации */
 @media (max-width: 760px) {
   main { padding: 10px 10px 18px; }
+  .setup-footer { margin: 16px -10px -18px; padding: 10px; }
+  #finished-screen { padding-top: 6px; }
+  .finished-card { padding: 16px 12px 0; }
+  .finished-card h1 { font-size: 28px; }
+  .finished-actions { margin: 0 -12px; padding: 10px 12px 12px; }
   #topbar { flex-wrap: wrap; gap: 8px; padding: 8px 10px; }
   #phase-label { font-size: 18px; }
-  #timer-display { font-size: 24px; min-width: 60px; }
+  #timer-display { font-size: 26px; min-width: 60px; }
   .btn { min-height: 42px; padding: 7px 12px; font-size: 15px; }
   .btn-big { font-size: 16px; padding: 10px 18px; }
   #menu-popover { width: calc(100vw - 28px); }
@@ -554,7 +758,14 @@ input[type="text"], input[type="number"] {
 /* узкие телефоны */
 @media (max-width: 480px) {
   #phase-label { font-size: 16px; }
-  .vote-quick .btn { min-width: 34px; min-height: 36px; }
+  /* шапка в две строки: фаза и меню сверху, таймер — отдельной строкой ниже */
+  #timer-box { order: 3; flex-basis: 100%; }
+  #topbar > .tb-group:last-child { order: 2; margin-left: auto; }
+  #conn-ind { padding: 0 4px; }
+  /* только точка; «нет оверлея» — оранжевым кружком, пояснение во всплывающей подсказке */
+  #conn-text { display: none; }
+  #conn-ind.warn { padding: 6px; }
+  .vote-keys .btn { min-height: 42px; }
   .seat-grid .btn { min-height: 42px; font-size: 15px; }
   .srow .sroles .role-assigned { min-width: 0; flex: 1; }
 }
